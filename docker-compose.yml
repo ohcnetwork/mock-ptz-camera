@@ -1,0 +1,13 @@
+services:
+  mock-ptz-camera:
+    build: .
+    ports:
+      - "8554:8554"
+      - "8080:8080"
+      - "3702:3702/udp"
+    environment:
+      - CAMERA_USER=admin
+      - CAMERA_PASS=admin
+      - RTSP_PORT=8554
+      - WEB_PORT=8080
+    restart: unless-stopped

@@ -1,0 +1,135 @@
+package rtsp
+
+import (
+	"sync"
+
+	log "github.com/sirupsen/logrus"
+
+	"github.com/bluenviron/gortsplib/v5"
+	"github.com/bluenviron/gortsplib/v5/pkg/base"
+	"github.com/bluenviron/gortsplib/v5/pkg/description"
+	"github.com/bluenviron/gortsplib/v5/pkg/format"
+	"github.com/bluenviron/gortsplib/v5/pkg/liberrors"
+	"github.com/pion/rtp"
+
+	"github.com/ohcnetwork/mock-ptz-camera/auth"
+)
+
+type Server struct {
+	lib    *gortsplib.Server
+	stream *gortsplib.ServerStream
+	Format *format.H264
+	creds  auth.Credentials
+	mu     sync.Mutex
+}
+
+type serverHandler struct {
+	s *Server
+}
+
+func NewServer(address string, creds auth.Credentials, sps, pps []byte) (*Server, error) {
+	h264Format := &format.H264{
+		PayloadTyp:        96,
+		PacketizationMode: 1,
+		SPS:               sps,
+		PPS:               pps,
+	}
+
+	s := &Server{
+		Format: h264Format,
+		creds:  creds,
+	}
+
+	s.lib = &gortsplib.Server{
+		Handler:        &serverHandler{s: s},
+		RTSPAddress:    address,
+		WriteQueueSize: 512,
+	}
+
+	return s, nil
+}
+
+func (s *Server) Start() error {
+	log.WithField("addr", s.lib.RTSPAddress).Info("starting RTSP server")
+	if err := s.lib.Start(); err != nil {
+		return err
+	}
+
+	media := &description.Media{
+		Type:    description.MediaTypeVideo,
+		Formats: []format.Format{s.Format},
+	}
+	desc := &description.Session{
+		Medias: []*description.Media{media},
+	}
+
+	stream := &gortsplib.ServerStream{
+		Server: s.lib,
+		Desc:   desc,
+	}
+	if err := stream.Initialize(); err != nil {
+		s.lib.Close()
+		return err
+	}
+	s.stream = stream
+
+	return nil
+}
+
+func (s *Server) Close() {
+	s.stream.Close()
+	s.lib.Close()
+}
+
+func (s *Server) WritePacketRTP(pkt *rtp.Packet) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stream.WritePacketRTP(s.stream.Desc.Medias[0], pkt)
+}
+
+// authenticate checks RTSP digest auth and returns an unauthorized response if it fails.
+func (h *serverHandler) authenticate(conn *gortsplib.ServerConn, req *base.Request) (*base.Response, error) {
+	if !conn.VerifyCredentials(req, h.s.creds.Username, h.s.creds.Password) {
+		return &base.Response{StatusCode: base.StatusUnauthorized}, liberrors.ErrServerAuth{}
+	}
+	return nil, nil
+}
+
+func (h *serverHandler) OnConnOpen(ctx *gortsplib.ServerHandlerOnConnOpenCtx) {
+	log.WithField("remote", ctx.Conn.NetConn().RemoteAddr()).Info("RTSP connection opened")
+}
+
+func (h *serverHandler) OnConnClose(ctx *gortsplib.ServerHandlerOnConnCloseCtx) {
+	log.WithField("remote", ctx.Conn.NetConn().RemoteAddr()).Info("RTSP connection closed")
+}
+
+func (h *serverHandler) OnSessionOpen(ctx *gortsplib.ServerHandlerOnSessionOpenCtx) {
+	log.Debug("RTSP session opened")
+}
+
+func (h *serverHandler) OnSessionClose(ctx *gortsplib.ServerHandlerOnSessionCloseCtx) {
+	log.Debug("RTSP session closed")
+}
+
+func (h *serverHandler) OnDescribe(ctx *gortsplib.ServerHandlerOnDescribeCtx) (*base.Response, *gortsplib.ServerStream, error) {
+	if resp, err := h.authenticate(ctx.Conn, ctx.Request); resp != nil {
+		return resp, nil, err
+	}
+	return &base.Response{StatusCode: base.StatusOK}, h.s.stream, nil
+}
+
+func (h *serverHandler) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*base.Response, *gortsplib.ServerStream, error) {
+	if resp, err := h.authenticate(ctx.Conn, ctx.Request); resp != nil {
+		return resp, nil, err
+	}
+	return &base.Response{StatusCode: base.StatusOK}, h.s.stream, nil
+}
+
+func (h *serverHandler) OnPlay(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Response, error) {
+	log.Info("RTSP client started playing")
+	return &base.Response{StatusCode: base.StatusOK}, nil
+}
+
+func (h *serverHandler) OnAnnounce(ctx *gortsplib.ServerHandlerOnAnnounceCtx) (*base.Response, error) {
+	return &base.Response{StatusCode: base.StatusMethodNotAllowed}, nil
+}
