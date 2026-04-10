@@ -19,9 +19,4 @@ COPY --from=builder /app/assets ./assets/
 
 EXPOSE 8554 8080 3702/udp
 
-ENV CAMERA_USER=admin
-ENV CAMERA_PASS=admin
-ENV RTSP_PORT=8554
-ENV WEB_PORT=8080
-
 ENTRYPOINT ["./mock-ptz-camera"]

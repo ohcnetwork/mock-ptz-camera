@@ -29,7 +29,7 @@ func Load() *Config {
 		Height:    envIntOrDefault("HEIGHT", 720),
 		FPS:       envIntOrDefault("FPS", 30),
 		LogLevel:  envOrDefault("LOG_LEVEL", "info"),
-		Renderer:  envOrDefault("RENDERER", "testpattern"),
+		Renderer:  envOrDefault("RENDERER", "pano"),
 		PanoImage: envOrDefault("PANO_IMAGE", "assets/default_pano.jpg"),
 	}
 }

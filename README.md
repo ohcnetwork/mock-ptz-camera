@@ -60,7 +60,7 @@ All settings are configurable via environment variables:
 | `HEIGHT` | `720` | Output resolution height |
 | `FPS` | `30` | Output frame rate |
 | `LOG_LEVEL` | `info` | Log verbosity (`debug`, `info`, `warn`, `error`) |
-| `RENDERER` | `testpattern` | Renderer type: `testpattern` or `pano` |
+| `RENDERER` | `pano` | Renderer type: `testpattern` or `pano` |
 | `PANO_IMAGE` | `assets/default_pano.jpg` | Path to equirectangular panoramic image (used when `RENDERER=pano`) |
 
 ## Endpoints
