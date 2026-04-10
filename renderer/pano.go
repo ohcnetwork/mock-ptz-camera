@@ -55,8 +55,8 @@ func (p *PanoRenderer) Render(pos ptz.Position, fps float64) []byte {
 	// Map PTZ values to camera orientation.
 	// Pan: -1..+1 → yaw -π..+π (full 360°)
 	yaw := pos.Pan * math.Pi
-	// Tilt: -0.33..+1.0 → pitch (negate so positive tilt looks up)
-	pitch := -pos.Tilt * math.Pi / 2.0
+	// Tilt: TiltHorizon (0.8) = horizontal (pitch 0), -1.0 = nadir (pitch -π/2)
+	pitch := (pos.Tilt - ptz.TiltHorizon) * math.Pi / (2.0 * (ptz.TiltHorizon - ptz.TiltMin))
 	// Zoom: 0..1 → horizontal FOV from 90° down to ~4.5°
 	fovH := (math.Pi / 2.0) / (1.0 + pos.Zoom*19.0)
 
@@ -67,7 +67,6 @@ func (p *PanoRenderer) Render(pos ptz.Position, fps float64) []byte {
 	// Half-dimensions for NDC mapping.
 	halfW := float64(w) / 2.0
 	halfH := float64(h) / 2.0
-	aspect := float64(w) / float64(h)
 	focalLen := halfW / math.Tan(fovH/2.0)
 
 	srcWf := float64(p.srcW)
@@ -80,7 +79,6 @@ func (p *PanoRenderer) Render(pos ptz.Position, fps float64) []byte {
 
 		for px := 0; px < w; px++ {
 			cx := float64(px) - halfW + 0.5
-			_ = aspect // aspect is baked into pixel coordinates
 
 			// Ray direction in camera space (looking along +Z).
 			dx := cx
@@ -93,9 +91,9 @@ func (p *PanoRenderer) Render(pos ptz.Position, fps float64) []byte {
 			dy *= invLen
 			dz *= invLen
 
-			// Rotate by pitch (around X axis).
-			dy2 := dy*cosP - dz*sinP
-			dz2 := dy*sinP + dz*cosP
+			// Rotate by pitch (around X axis, positive = look up).
+			dy2 := dy*cosP + dz*sinP
+			dz2 := -dy*sinP + dz*cosP
 
 			// Rotate by yaw (around Y axis).
 			dx3 := dx*cosY + dz2*sinY
@@ -120,9 +118,6 @@ func (p *PanoRenderer) Render(pos ptz.Position, fps float64) []byte {
 		}
 	}
 
-	if pos.Flipped {
-		FlipVertical(p.buf, w, h)
-	}
 	DrawCrosshair(p.buf, w, h)
 	DrawOSD(p.buf, w, h, pos, fps)
 	return p.buf

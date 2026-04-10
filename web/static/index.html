@@ -482,9 +482,9 @@
             <button data-pan="1"  data-tilt="-1" title="Down-Right">&#8600;</button>
           </div>
           <div class="zoom-buttons">
-            <button data-zoom="-1" title="Zoom In">Z+</button>
-            <button data-zoom="0" title="Reset" onclick="sendRelative(0,0,0)" style="font-size:11px">RST</button>
-            <button data-zoom="1" title="Zoom Out">Z&minus;</button>
+            <button data-zoom="1" title="Zoom In">Z+</button>
+            <button title="Reset Zoom" onclick="sendAbsoluteValues(parseFloat(document.getElementById('sPan').textContent), parseFloat(document.getElementById('sTilt').textContent), 0)" style="font-size:11px">RST</button>
+            <button data-zoom="-1" title="Zoom Out">Z&minus;</button>
           </div>
         </div>
       </div>
@@ -494,7 +494,7 @@
         <h3>Speed</h3>
         <div class="speed-row">
           <span style="font-size:12px;color:var(--text-muted)">Slow</span>
-          <input type="range" id="speedSlider" min="0.01" max="1" step="0.01" value="0.5">
+          <input type="range" id="speedSlider" min="0.01" max="1" step="0.01" value="0.10">
           <span style="font-size:12px;color:var(--text-muted)">Fast</span>
           <span class="speed-val" id="speedVal">0.10</span>
         </div>

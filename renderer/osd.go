@@ -8,17 +8,18 @@ import (
 	"github.com/ohcnetwork/mock-ptz-camera/ptz"
 )
 
-// FlipVertical flips an RGB24 frame buffer vertically in-place.
-func FlipVertical(buf []byte, w, h int) {
-	stride := w * 3
-	for top := 0; top < h/2; top++ {
-		bot := h - 1 - top
-		topOff := top * stride
-		botOff := bot * stride
-		for i := 0; i < stride; i++ {
-			buf[topOff+i], buf[botOff+i] = buf[botOff+i], buf[topOff+i]
-		}
+// panDeg converts normalized pan (-1..+1) to degrees (0..360) like real cameras.
+func panDeg(pan float64) float64 {
+	d := pan * 180.0
+	if d < 0 {
+		d += 360.0
 	}
+	return d
+}
+
+// tiltDeg converts normalized tilt to degrees from horizontal (0° = horizon, 90° = nadir).
+func tiltDeg(tilt float64) float64 {
+	return (ptz.TiltHorizon - tilt) * 90.0 / (ptz.TiltHorizon - ptz.TiltMin)
 }
 
 // DrawCrosshair draws a center crosshair and zoom bar on an RGB24 frame.
@@ -39,11 +40,6 @@ func DrawCrosshair(buf []byte, w, h int) {
 			setPixel(buf, w, cx-1, py, white)
 		}
 	}
-
-	// Zoom bar at bottom
-	barY := h - 12
-	barX := w/2 - 50
-	DarkenRect(buf, w, h, barX, barY-2, 101, 5)
 }
 
 // DrawOSD draws the on-screen display (timestamp, FPS, PTZ info) on an RGB24 frame.
@@ -56,13 +52,10 @@ func DrawOSD(buf []byte, w, h int, pos ptz.Position, fps float64) {
 	lines := []string{
 		now.Format("2006-01-02 15:04:05"),
 		fmt.Sprintf("FPS:%.1f", fps),
-		fmt.Sprintf("P:%+.1f° T:%+.1f° Z:%.1fx",
-			pos.Pan*180.0,
-			pos.Tilt*90.0,
+		fmt.Sprintf("P:%.0f° T:%.0f° Z:%.0fx",
+			panDeg(pos.Pan),
+			tiltDeg(pos.Tilt),
 			1.0+pos.Zoom*19.0),
-	}
-	if pos.Flipped {
-		lines = append(lines, "AUTOFLIP")
 	}
 
 	maxChars := 0

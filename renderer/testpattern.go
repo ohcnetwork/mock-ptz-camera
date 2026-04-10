@@ -24,9 +24,6 @@ func NewTestRenderer(width, height int) *TestRenderer {
 // Render generates a test pattern frame based on the PTZ position.
 func (t *TestRenderer) Render(pos ptz.Position, fps float64) []byte {
 	t.renderPattern(pos)
-	if pos.Flipped {
-		FlipVertical(t.buf, t.width, t.height)
-	}
 	DrawCrosshair(t.buf, t.width, t.height)
 	DrawOSD(t.buf, t.width, t.height, pos, fps)
 	return t.buf
@@ -36,10 +33,10 @@ func (t *TestRenderer) renderPattern(pos ptz.Position) {
 	w, h := t.width, t.height
 
 	// Map PTZ pan/tilt to a virtual camera offset in a large tiled plane.
-	gridScale := 40.0 / (1.0 + pos.Zoom*9.0)
+	gridScale := 40.0 * (1.0 + pos.Zoom*9.0)
 	invGrid := 1.0 / gridScale
 	offsetX := pos.Pan * 500.0
-	offsetY := -pos.Tilt * 500.0
+	offsetY := -(pos.Tilt - ptz.TiltHorizon) * 500.0
 	halfW := float64(w) / 2
 	halfH := float64(h) / 2
 	lineThresh := 0.04
