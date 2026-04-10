@@ -86,6 +86,11 @@ type probeMatchData struct {
 	DeviceURL string
 }
 
+type ptzRangeData struct {
+	TiltMin string
+	TiltMax string
+}
+
 // Templates
 
 var onvifTemplates = template.New("onvif")
@@ -311,7 +316,7 @@ func init() {
 	<tptz:PresetToken>{{.Token}}</tptz:PresetToken>
 </tptz:SetPresetResponse>`)
 
-	// PTZ service: GetNodes (data: nil)
+	// PTZ service: GetNodes (data: ptzRangeData)
 	t("getNodes", `<tptz:GetNodesResponse>
 	<tptz:PTZNode token="PTZNode_1" FixedHomePosition="false">
 		<tt:Name>MockPTZNode</tt:Name>
@@ -319,7 +324,7 @@ func init() {
 			<tt:AbsolutePanTiltPositionSpace>
 				<tt:URI>http://www.onvif.org/ver10/tptz/PanTiltSpaces/PositionGenericSpace</tt:URI>
 				<tt:XRange><tt:Min>-1</tt:Min><tt:Max>1</tt:Max></tt:XRange>
-				<tt:YRange><tt:Min>-0.33</tt:Min><tt:Max>1</tt:Max></tt:YRange>
+				<tt:YRange><tt:Min>{{.TiltMin}}</tt:Min><tt:Max>{{.TiltMax}}</tt:Max></tt:YRange>
 			</tt:AbsolutePanTiltPositionSpace>
 			<tt:AbsoluteZoomPositionSpace>
 				<tt:URI>http://www.onvif.org/ver10/tptz/ZoomSpaces/PositionGenericSpace</tt:URI>

@@ -14,22 +14,23 @@ const (
 	zoomMoveSpeed  = 0.5 // normalized units per second
 
 	// Pan wraps around continuously (360° rotation)
-	panMin = -1.0
-	panMax = 1.0
+	PanMin = -1.0
+	PanMax = 1.0
 
 	// Tilt: -30° to +90° mapped to -0.33 to 1.0 in normalized space
-	tiltMin = -0.33
-	tiltMax = 1.0
+	TiltMin = -0.33
+	TiltMax = 1.0
 
 	// Zoom: 1x to 20x
-	zoomMin = 0.0
-	zoomMax = 1.0
+	ZoomMin = 0.0
+	ZoomMax = 1.0
 )
 
 type Position struct {
-	Pan  float64 // -1.0 to +1.0
-	Tilt float64 // -1.0 to +1.0
-	Zoom float64 // 0.0 to 1.0
+	Pan     float64 // -1.0 to +1.0
+	Tilt    float64 // TiltMin to TiltMax
+	Zoom    float64 // 0.0 to 1.0
+	Flipped bool    // true when autoflip has inverted the view
 }
 
 type Velocity struct {
@@ -121,9 +122,10 @@ func (s *State) AbsoluteMove(pan, tilt, zoom float64) {
 	s.mu.Lock()
 	s.velocity = Velocity{}
 	t := Position{
-		Pan:  clamp(pan, panMin, panMax),
-		Tilt: clamp(tilt, tiltMin, tiltMax),
-		Zoom: clamp(zoom, zoomMin, zoomMax),
+		Pan:     clamp(pan, PanMin, PanMax),
+		Tilt:    clamp(tilt, TiltMin, TiltMax),
+		Zoom:    clamp(zoom, ZoomMin, ZoomMax),
+		Flipped: false,
 	}
 	s.target = &t
 	s.moving = true
@@ -133,10 +135,27 @@ func (s *State) AbsoluteMove(pan, tilt, zoom float64) {
 func (s *State) RelativeMove(dPan, dTilt, dZoom float64) {
 	s.mu.Lock()
 	s.velocity = Velocity{}
+	newTilt := s.position.Tilt + dTilt
+	newPan := s.position.Pan + dPan
+	flipped := s.position.Flipped
+	// Autoflip: if relative tilt would exceed max, flip over
+	if newTilt > TiltMax {
+		newTilt = 2*TiltMax - newTilt
+		newPan += 1.0 // 180° pan flip
+		flipped = !flipped
+	}
+	newTilt = clamp(newTilt, TiltMin, TiltMax)
+	// Wrap pan
+	if newPan > PanMax {
+		newPan -= (PanMax - PanMin)
+	} else if newPan < PanMin {
+		newPan += (PanMax - PanMin)
+	}
 	t := Position{
-		Pan:  clamp(s.position.Pan+dPan, panMin, panMax),
-		Tilt: clamp(s.position.Tilt+dTilt, tiltMin, tiltMax),
-		Zoom: clamp(s.position.Zoom+dZoom, zoomMin, zoomMax),
+		Pan:     newPan,
+		Tilt:    newTilt,
+		Zoom:    clamp(s.position.Zoom+dZoom, ZoomMin, ZoomMax),
+		Flipped: flipped,
 	}
 	s.target = &t
 	s.moving = true
@@ -228,6 +247,7 @@ func (s *State) tick() {
 		s.position.Pan += (s.target.Pan - s.position.Pan) * alpha
 		s.position.Tilt += (s.target.Tilt - s.position.Tilt) * alpha
 		s.position.Zoom += (s.target.Zoom - s.position.Zoom) * alpha
+		s.position.Flipped = s.target.Flipped
 
 		// Snap when close enough
 		const eps = 0.001
@@ -256,22 +276,23 @@ func (s *State) tick() {
 	dt := updateInterval.Seconds()
 	s.position.Pan += s.velocity.PanSpeed * panSpeed * dt
 	s.position.Tilt += s.velocity.TiltSpeed * tiltSpeed * dt
-	s.position.Zoom = clamp(s.position.Zoom+s.velocity.ZoomSpeed*zoomMoveSpeed*dt, zoomMin, zoomMax)
+	s.position.Zoom = clamp(s.position.Zoom+s.velocity.ZoomSpeed*zoomMoveSpeed*dt, ZoomMin, ZoomMax)
 
 	// Autoflip: when tilt exceeds max, flip pan 180° and mirror tilt back
-	if s.position.Tilt > tiltMax {
-		s.position.Tilt = 2*tiltMax - s.position.Tilt
+	if s.position.Tilt > TiltMax {
+		s.position.Tilt = 2*TiltMax - s.position.Tilt
 		s.position.Pan += 1.0 // 180° pan flip
 		s.velocity.TiltSpeed = -s.velocity.TiltSpeed
-	} else if s.position.Tilt < tiltMin {
-		s.position.Tilt = clamp(s.position.Tilt, tiltMin, tiltMax)
+		s.position.Flipped = !s.position.Flipped
+	} else if s.position.Tilt < TiltMin {
+		s.position.Tilt = clamp(s.position.Tilt, TiltMin, TiltMax)
 	}
 
 	// Pan wraps around continuously (360° rotation)
-	if s.position.Pan > panMax {
-		s.position.Pan -= (panMax - panMin)
-	} else if s.position.Pan < panMin {
-		s.position.Pan += (panMax - panMin)
+	if s.position.Pan > PanMax {
+		s.position.Pan -= (PanMax - PanMin)
+	} else if s.position.Pan < PanMin {
+		s.position.Pan += (PanMax - PanMin)
 	}
 	status := Status{Position: s.position, MoveStatus: MoveStatusMoving}
 	s.mu.Unlock()

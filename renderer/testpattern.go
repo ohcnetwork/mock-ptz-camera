@@ -26,6 +26,9 @@ func NewTestRenderer(width, height int) *TestRenderer {
 // Render generates a test pattern frame based on the PTZ position.
 func (t *TestRenderer) Render(pos ptz.Position, fps float64) []byte {
 	t.renderPattern(pos)
+	if pos.Flipped {
+		t.flipVertical()
+	}
 	t.drawCrosshair()
 	t.drawOSD(pos, fps)
 	return t.buf
@@ -107,6 +110,19 @@ func (t *TestRenderer) renderPattern(pos ptz.Position) {
 	}
 }
 
+func (t *TestRenderer) flipVertical() {
+	w, h := t.width, t.height
+	stride := w * 3
+	for top := 0; top < h/2; top++ {
+		bot := h - 1 - top
+		topOff := top * stride
+		botOff := bot * stride
+		for i := 0; i < stride; i++ {
+			t.buf[topOff+i], t.buf[botOff+i] = t.buf[botOff+i], t.buf[topOff+i]
+		}
+	}
+}
+
 func (t *TestRenderer) drawCrosshair() {
 	w, h := t.width, t.height
 	white := color.RGBA{255, 255, 255, 255}
@@ -140,14 +156,15 @@ func (t *TestRenderer) drawOSD(pos ptz.Position, fps float64) {
 	pad := 8
 
 	lines := []string{
-		"MOCK PTZ CAMERA",
 		now.Format("2006-01-02 15:04:05"),
-		fmt.Sprintf("TS:%d", now.Unix()),
 		fmt.Sprintf("FPS:%.1f", fps),
 		fmt.Sprintf("P:%+.1f° T:%+.1f° Z:%.1fx",
 			pos.Pan*180.0,
 			pos.Tilt*90.0,
 			1.0+pos.Zoom*19.0),
+	}
+	if pos.Flipped {
+		lines = append(lines, "AUTOFLIP")
 	}
 
 	maxChars := 0

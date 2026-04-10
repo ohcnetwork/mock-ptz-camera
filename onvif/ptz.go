@@ -173,7 +173,10 @@ func (s *Server) removePreset(w http.ResponseWriter, env *SOAPEnvelope) {
 }
 
 func (s *Server) getNodes(w http.ResponseWriter) {
-	writeSOAPResponse(w, renderTemplate("getNodes", nil))
+	writeSOAPResponse(w, renderTemplate("getNodes", ptzRangeData{
+		TiltMin: fmt.Sprintf("%.2f", ptz.TiltMin),
+		TiltMax: fmt.Sprintf("%.2f", ptz.TiltMax),
+	}))
 }
 
 func (s *Server) getConfigurations(w http.ResponseWriter) {

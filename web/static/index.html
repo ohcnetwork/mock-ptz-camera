@@ -494,7 +494,7 @@
         <h3>Speed</h3>
         <div class="speed-row">
           <span style="font-size:12px;color:var(--text-muted)">Slow</span>
-          <input type="range" id="speedSlider" min="0.01" max="0.5" step="0.01" value="0.1">
+          <input type="range" id="speedSlider" min="0.01" max="1" step="0.01" value="0.5">
           <span style="font-size:12px;color:var(--text-muted)">Fast</span>
           <span class="speed-val" id="speedVal">0.10</span>
         </div>
@@ -603,7 +603,8 @@
       holdIntervals.set(btn, setInterval(fire, 150));
     } else {
       activeButtons.add(btn);
-      sendContinuous(pan, tilt, 0);
+      const speed = parseFloat(speedSlider.value);
+      sendContinuous(pan * speed, tilt * speed, 0);
     }
   }
 
@@ -627,7 +628,8 @@
       holdIntervals.set(btn, setInterval(fire, 150));
     } else {
       activeButtons.add(btn);
-      sendContinuous(0, 0, zoom);
+      const speed = parseFloat(speedSlider.value);
+      sendContinuous(0, 0, zoom * speed);
     }
   }
 
