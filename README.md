@@ -2,6 +2,8 @@
 
 A software-defined mock PTZ (Pan-Tilt-Zoom) IP camera with RTSP streaming, ONVIF control, and a built-in web UI. It renders a test pattern that responds to PTZ commands, streams the result as H.264 over RTSP, and provides an MJPEG preview in the browser.
 
+![Mock PTZ Camera Web UI](docs/assets/screenshot1.png)
+
 ## Features
 
 - **RTSP Streaming** — H.264 stream via gortsplib with Digest authentication
