@@ -168,7 +168,7 @@ RENDERER=pano ./mock-ptz-camera
 RENDERER=pano PANO_IMAGE=/path/to/your/pano.jpg ./mock-ptz-camera
 ```
 
-The bundled default image (`assets/default_pano.jpg`) is [Urban Street 04](https://polyhaven.com/a/urban_street_04) from [Poly Haven](https://polyhaven.com), licensed under [CC0 (Public Domain)](https://polyhaven.com/license).
+The bundled default image (`assets/default_pano.jpg`) is [Hospital Room 2](https://polyhaven.com/a/hospital_room_2) from [Poly Haven](https://polyhaven.com), licensed under [CC0 (Public Domain)](https://polyhaven.com/license).
 
 ## License
 
