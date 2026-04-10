@@ -8,6 +8,7 @@ A software-defined mock PTZ (Pan-Tilt-Zoom) IP camera with RTSP streaming, ONVIF
 - **ONVIF Services** — Device, Media, PTZ, and Events (PullPoint) with WS-UsernameToken auth
 - **PTZ Control** — ContinuousMove, AbsoluteMove, RelativeMove, Stop, Presets
 - **Test Pattern Renderer** — Built-in test pattern with crosshair and zoom indicator (no video file needed)
+- **360° Panoramic Renderer** — Simulates a PTZ camera navigating an equirectangular 360° panoramic image with perspective projection
 - **Web UI** — MJPEG live preview with D-pad, zoom, speed, absolute move, and preset controls over WebSocket
 - **WS-Discovery** — Responds to ONVIF probe messages on `239.255.255.250:3702`
 - **Unified Auth** — Single credential set for ONVIF, RTSP, and Web UI (Basic auth)
@@ -15,7 +16,7 @@ A software-defined mock PTZ (Pan-Tilt-Zoom) IP camera with RTSP streaming, ONVIF
 ## Architecture
 
 ```
-[Test Pattern Renderer] ← PTZ State ← ONVIF PTZ / WebSocket commands
+[Test Pattern / Pano Renderer] ← PTZ State ← ONVIF PTZ / WebSocket commands
           ↓
    [FFmpeg Encoder] → H.264 NALUs → [RTP Packetizer] → RTSP Server → clients
           ↓
@@ -59,6 +60,8 @@ All settings are configurable via environment variables:
 | `HEIGHT` | `720` | Output resolution height |
 | `FPS` | `30` | Output frame rate |
 | `LOG_LEVEL` | `info` | Log verbosity (`debug`, `info`, `warn`, `error`) |
+| `RENDERER` | `testpattern` | Renderer type: `testpattern` or `pano` |
+| `PANO_IMAGE` | `assets/default_pano.jpg` | Path to equirectangular panoramic image (used when `RENDERER=pano`) |
 
 ## Endpoints
 
@@ -121,6 +124,8 @@ The camera is discoverable via WS-Discovery and compatible with ONVIF Device Man
 │   ├── renderloop.go    # Frame render loop (drives encoder + JPEG snapshot)
 │   ├── jpeg.go          # RGB24 → JPEG conversion for MJPEG stream
 │   ├── testpattern.go   # Test pattern image renderer
+│   ├── pano.go          # 360° panoramic image renderer
+│   ├── osd.go           # Shared OSD (crosshair, text overlay, flip)
 │   └── font.go          # Embedded 5x7 bitmap font for OSD text
 ├── rtsp/
 │   ├── server.go        # gortsplib RTSP server wrapper
@@ -142,8 +147,28 @@ The camera is discoverable via WS-Discovery and compatible with ONVIF Device Man
 │   └── static/
 │       └── index.html   # Web UI (single-page, shadcn-inspired dark theme)
 ├── Dockerfile
-└── docker-compose.yml
+├── docker-compose.yml
+└── assets/
+    └── default_pano.jpg # Default equirectangular panoramic image (CC0)
 ```
+
+## Panoramic Renderer
+
+The `pano` renderer projects a perspective camera view into a 360° equirectangular panoramic image. PTZ controls navigate the virtual camera through the sphere:
+
+- **Pan** rotates the camera horizontally (full 360°)
+- **Tilt** adjusts the camera's vertical angle
+- **Zoom** narrows the field of view (from 90° down to ~4.5° at 20x)
+
+```bash
+# Use the pano renderer with the bundled default image
+RENDERER=pano ./mock-ptz-camera
+
+# Use a custom equirectangular image
+RENDERER=pano PANO_IMAGE=/path/to/your/pano.jpg ./mock-ptz-camera
+```
+
+The bundled default image (`assets/default_pano.jpg`) is [Urban Street 04](https://polyhaven.com/a/urban_street_04) from [Poly Haven](https://polyhaven.com), licensed under [CC0 (Public Domain)](https://polyhaven.com/license).
 
 ## License
 

@@ -15,6 +15,7 @@ RUN apk add --no-cache ffmpeg
 
 WORKDIR /app
 COPY --from=builder /app/mock-ptz-camera .
+COPY --from=builder /app/assets ./assets/
 
 EXPOSE 8554 8080 3702/udp
 

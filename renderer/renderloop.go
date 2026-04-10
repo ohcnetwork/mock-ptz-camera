@@ -8,6 +8,11 @@ import (
 	"github.com/ohcnetwork/mock-ptz-camera/ptz"
 )
 
+// Renderer produces raw RGB24 frames for the render loop.
+type Renderer interface {
+	Render(pos ptz.Position, fps float64) []byte
+}
+
 // FrameSink receives JPEG frames produced by the render loop.
 type FrameSink interface {
 	SetFrame(jpeg []byte)
@@ -15,7 +20,7 @@ type FrameSink interface {
 
 // RenderLoop feeds rendered frames to the encoder at the target FPS.
 // JPEG snapshots are also sent to sink for the web MJPEG stream.
-func RenderLoop(tr *TestRenderer, encoder *Encoder, ptzState *ptz.State, fps int, width, height int, sink FrameSink) {
+func RenderLoop(r Renderer, encoder *Encoder, ptzState *ptz.State, fps int, width, height int, sink FrameSink) {
 	frameDuration := time.Duration(float64(time.Second) / float64(fps))
 	ticker := time.NewTicker(frameDuration)
 	defer ticker.Stop()
@@ -28,7 +33,7 @@ func RenderLoop(tr *TestRenderer, encoder *Encoder, ptzState *ptz.State, fps int
 
 	for range ticker.C {
 		pos := ptzState.GetPosition()
-		frame := tr.Render(pos, measuredFPS)
+		frame := r.Render(pos, measuredFPS)
 
 		if err := encoder.WriteFrame(frame); err != nil {
 			log.WithError(err).Error("encoder write error")

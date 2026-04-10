@@ -50,7 +50,19 @@ func main() {
 		eventsService.OnPTZPositionChanged(status)
 	})
 
-	testRenderer := renderer.NewTestRenderer(cfg.Width, cfg.Height)
+	var activeRenderer renderer.Renderer
+	switch cfg.Renderer {
+	case "pano":
+		panoRenderer, err := renderer.NewPanoRenderer(cfg.Width, cfg.Height, cfg.PanoImage)
+		if err != nil {
+			log.WithError(err).Fatal("failed to create pano renderer")
+		}
+		activeRenderer = panoRenderer
+		log.WithField("image", cfg.PanoImage).Info("using pano renderer")
+	default:
+		activeRenderer = renderer.NewTestRenderer(cfg.Width, cfg.Height)
+		log.Info("using test pattern renderer")
+	}
 
 	encoder, err := renderer.NewEncoder(cfg.Width, cfg.Height, cfg.FPS)
 	if err != nil {
@@ -91,7 +103,7 @@ func main() {
 
 	frameStore := web.NewFrameStore()
 
-	go renderer.RenderLoop(testRenderer, encoder, ptzState, cfg.FPS, cfg.Width, cfg.Height, frameStore)
+	go renderer.RenderLoop(activeRenderer, encoder, ptzState, cfg.FPS, cfg.Width, cfg.Height, frameStore)
 	go rtsp.StreamLoop(encoder, rtpEncoder, rtspServer, cfg.FPS)
 
 	onvifServer := onvif.NewServer(cfg, creds, ptzState, eventsService, hostIP)

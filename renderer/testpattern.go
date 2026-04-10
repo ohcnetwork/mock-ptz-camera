@@ -1,10 +1,8 @@
 package renderer
 
 import (
-	"fmt"
 	"image/color"
 	"math"
-	"time"
 
 	"github.com/ohcnetwork/mock-ptz-camera/ptz"
 )
@@ -27,10 +25,10 @@ func NewTestRenderer(width, height int) *TestRenderer {
 func (t *TestRenderer) Render(pos ptz.Position, fps float64) []byte {
 	t.renderPattern(pos)
 	if pos.Flipped {
-		t.flipVertical()
+		FlipVertical(t.buf, t.width, t.height)
 	}
-	t.drawCrosshair()
-	t.drawOSD(pos, fps)
+	DrawCrosshair(t.buf, t.width, t.height)
+	DrawOSD(t.buf, t.width, t.height, pos, fps)
 	return t.buf
 }
 
@@ -107,79 +105,6 @@ func (t *TestRenderer) renderPattern(pos ptz.Position) {
 			t.buf[idx+1] = g
 			t.buf[idx+2] = b
 		}
-	}
-}
-
-func (t *TestRenderer) flipVertical() {
-	w, h := t.width, t.height
-	stride := w * 3
-	for top := 0; top < h/2; top++ {
-		bot := h - 1 - top
-		topOff := top * stride
-		botOff := bot * stride
-		for i := 0; i < stride; i++ {
-			t.buf[topOff+i], t.buf[botOff+i] = t.buf[botOff+i], t.buf[topOff+i]
-		}
-	}
-}
-
-func (t *TestRenderer) drawCrosshair() {
-	w, h := t.width, t.height
-	white := color.RGBA{255, 255, 255, 255}
-
-	cy := h / 2
-	for px := w/2 - 20; px <= w/2+20; px++ {
-		if px >= 0 && px < w {
-			setPixel(t.buf, w, px, cy, white)
-			setPixel(t.buf, w, px, cy-1, white)
-		}
-	}
-	cx := w / 2
-	for py := h/2 - 20; py <= h/2+20; py++ {
-		if py >= 0 && py < h {
-			setPixel(t.buf, w, cx, py, white)
-			setPixel(t.buf, w, cx-1, py, white)
-		}
-	}
-
-	// Zoom bar at bottom
-	barY := h - 12
-	barX := w/2 - 50
-	DarkenRect(t.buf, w, h, barX, barY-2, 101, 5)
-}
-
-func (t *TestRenderer) drawOSD(pos ptz.Position, fps float64) {
-	w, h := t.width, t.height
-	now := time.Now()
-	scale := 2
-	lineH := (fontH + 2) * scale
-	pad := 8
-
-	lines := []string{
-		now.Format("2006-01-02 15:04:05"),
-		fmt.Sprintf("FPS:%.1f", fps),
-		fmt.Sprintf("P:%+.1f° T:%+.1f° Z:%.1fx",
-			pos.Pan*180.0,
-			pos.Tilt*90.0,
-			1.0+pos.Zoom*19.0),
-	}
-	if pos.Flipped {
-		lines = append(lines, "AUTOFLIP")
-	}
-
-	maxChars := 0
-	for _, l := range lines {
-		if len(l) > maxChars {
-			maxChars = len(l)
-		}
-	}
-	bgW := maxChars*(fontW+1)*scale + pad*2
-	bgH := len(lines)*lineH + pad*2
-	DarkenRect(t.buf, w, h, 0, 0, bgW, bgH)
-
-	green := color.RGBA{0, 255, 0, 255}
-	for i, line := range lines {
-		DrawTextShadow(t.buf, w, h, pad, pad+i*lineH, line, scale, green)
 	}
 }
 
