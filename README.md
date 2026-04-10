@@ -1,6 +1,6 @@
 # Mock PTZ Camera
 
-A software-defined mock PTZ (Pan-Tilt-Zoom) IP camera with RTSP streaming, ONVIF control, and a built-in web UI. It renders a test pattern that responds to PTZ commands, streams the result as H.264 over RTSP, and provides an MJPEG preview in the browser.
+A software-defined mock PTZ (Pan-Tilt-Zoom) IP camera with RTSP streaming, ONVIF control, and a built-in web UI. By default it renders a perspective view into a 360° panoramic image that responds to PTZ commands, streams the result as H.264 over RTSP, and provides an MJPEG preview in the browser.
 
 ![Mock PTZ Camera Web UI](docs/assets/screenshot1.png)
 
@@ -9,8 +9,8 @@ A software-defined mock PTZ (Pan-Tilt-Zoom) IP camera with RTSP streaming, ONVIF
 - **RTSP Streaming** — H.264 stream via gortsplib with Digest authentication
 - **ONVIF Services** — Device, Media, PTZ, and Events (PullPoint) with WS-UsernameToken auth
 - **PTZ Control** — ContinuousMove, AbsoluteMove, RelativeMove, Stop, Presets
+- **360° Panoramic Renderer** — Simulates a PTZ camera navigating an equirectangular 360° panoramic image with perspective projection (default)
 - **Test Pattern Renderer** — Built-in test pattern with crosshair and zoom indicator (no video file needed)
-- **360° Panoramic Renderer** — Simulates a PTZ camera navigating an equirectangular 360° panoramic image with perspective projection
 - **Web UI** — MJPEG live preview with D-pad, zoom, speed, absolute move, and preset controls over WebSocket
 - **WS-Discovery** — Responds to ONVIF probe messages on `239.255.255.250:3702`
 - **Unified Auth** — Single credential set for ONVIF, RTSP, and Web UI (Basic auth)
@@ -62,7 +62,7 @@ All settings are configurable via environment variables:
 | `HEIGHT` | `720` | Output resolution height |
 | `FPS` | `30` | Output frame rate |
 | `LOG_LEVEL` | `info` | Log verbosity (`debug`, `info`, `warn`, `error`) |
-| `RENDERER` | `pano` | Renderer type: `testpattern` or `pano` |
+| `RENDERER` | `pano` | Renderer type: `pano` or `testpattern` |
 | `PANO_IMAGE` | `assets/default_pano.jpg` | Path to equirectangular panoramic image (used when `RENDERER=pano`) |
 
 ## Endpoints
@@ -163,11 +163,14 @@ The `pano` renderer projects a perspective camera view into a 360° equirectangu
 - **Zoom** narrows the field of view (from 90° down to ~4.5° at 20x)
 
 ```bash
-# Use the pano renderer with the bundled default image
-RENDERER=pano ./mock-ptz-camera
+# Use the default pano renderer with the bundled default image
+./mock-ptz-camera
 
 # Use a custom equirectangular image
-RENDERER=pano PANO_IMAGE=/path/to/your/pano.jpg ./mock-ptz-camera
+PANO_IMAGE=/path/to/your/pano.jpg ./mock-ptz-camera
+
+# Use the test pattern renderer instead
+RENDERER=testpattern ./mock-ptz-camera
 ```
 
 The bundled default image (`assets/default_pano.jpg`) is [Hospital Room 2](https://polyhaven.com/a/hospital_room_2) from [Poly Haven](https://polyhaven.com), licensed under [CC0 (Public Domain)](https://polyhaven.com/license).
