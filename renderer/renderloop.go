@@ -25,7 +25,7 @@ type Renderer interface {
 }
 
 // RenderLoop is the main production loop that ties the renderer and encoder
-// together. It runs on its own goroutine and never returns.
+// together. It runs on its own goroutine and returns when done is closed.
 //
 // On each tick (at the configured FPS):
 //  1. Fetches the current PTZ position from ptzState.
@@ -33,7 +33,7 @@ type Renderer interface {
 //  3. Writes the frame to encoder.WriteFrame() → FFmpeg → H.264 AUs.
 //
 // FPS is measured over 1-second windows. Stats are logged every 5 seconds.
-func RenderLoop(r Renderer, encoder *Encoder, ptzState *ptz.State, fps int) {
+func RenderLoop(r Renderer, encoder *Encoder, ptzState *ptz.State, fps int, done <-chan struct{}) {
 	frameDuration := time.Duration(float64(time.Second) / float64(fps))
 	ticker := time.NewTicker(frameDuration)
 	defer ticker.Stop()
@@ -44,7 +44,13 @@ func RenderLoop(r Renderer, encoder *Encoder, ptzState *ptz.State, fps int) {
 	lastFPSTime := time.Now()
 	lastLogTime := time.Now()
 
-	for range ticker.C {
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+		}
+
 		pos := ptzState.GetPosition()
 		frame := r.Render(pos, measuredFPS)
 

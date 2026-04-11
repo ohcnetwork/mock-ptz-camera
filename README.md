@@ -28,13 +28,17 @@ A software-defined mock PTZ (Pan-Tilt-Zoom) IP camera with RTSP streaming, ONVIF
                               RTSP Server        Web UI (WebCodecs)
 ```
 
-Three goroutines drive the pipeline:
+The entire rendering and encoding pipeline is **on-demand** — it starts when the first viewer connects (RTSP or WebSocket) and stops when the last viewer disconnects, consuming zero CPU while idle.
 
-1. **Render loop** (`renderer.RenderLoop`) — Ticks at the configured FPS. Each tick reads the current PTZ position, renders a frame as raw RGB24, and writes it to the FFmpeg encoder.
+The `Pipeline` orchestrator registers callbacks with the `AUHub` fan-out hub. When the subscriber count transitions from 0→1, it spins up a fresh FFmpeg encoder and render loop. When it transitions from N→0, it tears them down.
 
-2. **AU Hub** (`web.AUHub.Run`) — Reads H.264 access units from the encoder's output channel and fans them out to all subscribers (RTSP and WebSocket clients) via non-blocking sends.
+Three goroutines drive the active pipeline:
 
-3. **Stream loop** (`rtsp.StreamLoop`) — Subscribes to the AU Hub, wraps access units into RTP packets via `rtph264.Encoder`, and writes them to connected RTSP clients through gortsplib.
+1. **Render loop** (`renderer.RenderLoop`) — Ticks at the configured FPS. Each tick reads the current PTZ position, renders a frame as raw RGB24, and writes it to the FFmpeg encoder. Exits when the pipeline's done channel is closed.
+
+2. **Broadcast loop** — Reads H.264 access units from the encoder's output channel and fans them out via `AUHub.Broadcast()` to all subscribers (RTSP and WebSocket clients) using non-blocking sends.
+
+3. **Stream loop** (`rtsp.StreamLoop`) — Created per RTSP viewer session. Subscribes to the AUHub, wraps access units into RTP packets via `rtph264.Encoder`, and writes them to the connected RTSP client through gortsplib. Exits when the subscription is closed.
 
 ## Quick Start
 
@@ -148,7 +152,8 @@ The camera is discoverable via WS-Discovery and compatible with ONVIF Device Man
 ## Project Structure
 
 ```
-├── main.go              # Entry point, pipeline orchestration
+├── main.go              # Entry point, wiring, bootstrap SPS/PPS extraction
+├── pipeline.go          # On-demand pipeline lifecycle (start/stop encoder + render loop)
 ├── config/              # Environment-based configuration
 ├── auth/                # WS-UsernameToken + RTSP Digest validation
 ├── ptz/                 # PTZ state machine (position, velocity, presets)

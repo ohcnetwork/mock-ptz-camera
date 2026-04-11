@@ -1,6 +1,7 @@
 package rtsp
 
 import (
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -10,23 +11,39 @@ import (
 	"github.com/bluenviron/gortsplib/v5/pkg/base"
 	"github.com/bluenviron/gortsplib/v5/pkg/description"
 	"github.com/bluenviron/gortsplib/v5/pkg/format"
+	"github.com/bluenviron/gortsplib/v5/pkg/format/rtph264"
 	"github.com/bluenviron/gortsplib/v5/pkg/liberrors"
 	"github.com/pion/rtp"
 
 	"github.com/ohcnetwork/mock-ptz-camera/auth"
 )
 
+// Subscription is a source of H.264 access units that can be unsubscribed.
+type Subscription interface {
+	AccessUnits() <-chan [][]byte
+	Unsubscribe()
+}
+
+// SubscribeFunc creates a new AU subscription with the given buffer size.
+type SubscribeFunc func(bufSize int) Subscription
+
 type Server struct {
-	lib    *gortsplib.Server
-	stream *gortsplib.ServerStream
-	Format *format.H264
-	creds  auth.Credentials
+	lib         *gortsplib.Server
+	stream      *gortsplib.ServerStream
+	Format      *format.H264
+	creds       auth.Credentials
+	subscribeFn SubscribeFunc
+	rtpEncoder  *rtph264.Encoder
 }
 
 type serverHandler struct {
 	s          *Server
 	dropCount  atomic.Int64
 	lastDropLog atomic.Int64 // unix nanos
+
+	mu        sync.Mutex
+	playing   map[*gortsplib.ServerSession]struct{}
+	activeSub Subscription
 }
 
 func NewServer(address string, creds auth.Credentials, sps, pps []byte) (*Server, error) {
@@ -42,13 +59,25 @@ func NewServer(address string, creds auth.Credentials, sps, pps []byte) (*Server
 		creds:  creds,
 	}
 
+	handler := &serverHandler{
+		s:       s,
+		playing: make(map[*gortsplib.ServerSession]struct{}),
+	}
+
 	s.lib = &gortsplib.Server{
-		Handler:        &serverHandler{s: s},
+		Handler:        handler,
 		RTSPAddress:    address,
 		WriteQueueSize: 1024,
 	}
 
 	return s, nil
+}
+
+// SetSubscriber configures the function used to create AU subscriptions
+// and the RTP encoder for packetising H.264 frames.
+func (s *Server) SetSubscriber(fn SubscribeFunc, rtpEnc *rtph264.Encoder) {
+	s.subscribeFn = fn
+	s.rtpEncoder = rtpEnc
 }
 
 func (s *Server) Start() error {
@@ -108,6 +137,20 @@ func (h *serverHandler) OnSessionOpen(ctx *gortsplib.ServerHandlerOnSessionOpenC
 }
 
 func (h *serverHandler) OnSessionClose(ctx *gortsplib.ServerHandlerOnSessionCloseCtx) {
+	h.mu.Lock()
+	_, wasPlaying := h.playing[ctx.Session]
+	if wasPlaying {
+		delete(h.playing, ctx.Session)
+		if len(h.playing) == 0 && h.activeSub != nil {
+			sub := h.activeSub
+			h.activeSub = nil
+			h.mu.Unlock()
+			sub.Unsubscribe() // closes channel → StreamLoop exits
+			log.Info("last RTSP viewer left, unsubscribed from pipeline")
+			return
+		}
+	}
+	h.mu.Unlock()
 	log.Debug("RTSP session closed")
 }
 
@@ -126,6 +169,15 @@ func (h *serverHandler) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*base.R
 }
 
 func (h *serverHandler) OnPlay(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Response, error) {
+	h.mu.Lock()
+	h.playing[ctx.Session] = struct{}{}
+	if len(h.playing) == 1 && h.s.subscribeFn != nil {
+		sub := h.s.subscribeFn(64)
+		h.activeSub = sub
+		go StreamLoop(sub, h.s.rtpEncoder, h.s)
+		log.Info("first RTSP viewer, subscribed to pipeline")
+	}
+	h.mu.Unlock()
 	log.Info("RTSP client started playing")
 	return &base.Response{StatusCode: base.StatusOK}, nil
 }

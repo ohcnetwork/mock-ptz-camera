@@ -1,18 +1,23 @@
 package web
 
-import "sync"
+import (
+	"sync"
 
-// AUHub fans out H.264 access units from a single source to multiple subscribers.
-// It sits between the encoder's single output channel and multiple consumers
-// (RTSP stream loop, WebSocket video clients). Subscribers that can't keep up
-// have frames dropped via non-blocking sends. The hub caches the last keyframe
-// (IDR) AU so new subscribers can start displaying video immediately.
+	log "github.com/sirupsen/logrus"
+)
+
+// AUHub fans out H.264 access units to multiple subscribers.
+// It supports lifecycle callbacks: OnActive is called when the first
+// subscriber joins, and OnIdle when the last subscriber leaves. This
+// enables on-demand pipeline start/stop.
 type AUHub struct {
-	mu      sync.Mutex
-	subs    map[*AUSub]struct{}
-	sps     []byte
-	pps     []byte
-	lastIDR [][]byte
+	mu       sync.Mutex
+	subs     map[*AUSub]struct{}
+	sps      []byte
+	pps      []byte
+	lastIDR  [][]byte
+	onActive func() // called when subscriber count goes 0→1
+	onIdle   func() // called when subscriber count goes N→0
 }
 
 // AUSub is a subscriber that receives access units on a buffered channel.
@@ -31,6 +36,15 @@ func NewAUHub(sps, pps []byte) *AUHub {
 	}
 }
 
+// SetCallbacks registers functions called when the first subscriber arrives
+// (onActive) and when the last subscriber leaves (onIdle).
+func (h *AUHub) SetCallbacks(onActive, onIdle func()) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.onActive = onActive
+	h.onIdle = onIdle
+}
+
 // SPS returns the cached Sequence Parameter Set.
 func (h *AUHub) SPS() []byte { return h.sps }
 
@@ -45,22 +59,42 @@ func (h *AUHub) LastKeyframe() [][]byte {
 }
 
 // Subscribe creates a new subscriber with the given channel buffer size.
+// If this is the first subscriber and onActive is set, it is called.
 func (h *AUHub) Subscribe(bufSize int) *AUSub {
 	s := &AUSub{
 		C:   make(chan [][]byte, bufSize),
 		hub: h,
 	}
 	h.mu.Lock()
+	wasEmpty := len(h.subs) == 0
 	h.subs[s] = struct{}{}
+	onActive := h.onActive
 	h.mu.Unlock()
+
+	if wasEmpty && onActive != nil {
+		log.Info("first subscriber joined, activating pipeline")
+		onActive()
+	}
 	return s
 }
 
-// Unsubscribe removes this subscriber from the hub.
+// Unsubscribe removes this subscriber from the hub and closes its channel.
+// If this was the last subscriber and onIdle is set, it is called.
 func (s *AUSub) Unsubscribe() {
 	s.hub.mu.Lock()
-	delete(s.hub.subs, s)
+	_, exists := s.hub.subs[s]
+	if exists {
+		delete(s.hub.subs, s)
+		close(s.C)
+	}
+	nowEmpty := len(s.hub.subs) == 0
+	onIdle := s.hub.onIdle
 	s.hub.mu.Unlock()
+
+	if nowEmpty && onIdle != nil {
+		log.Info("last subscriber left, deactivating pipeline")
+		onIdle()
+	}
 }
 
 // AccessUnits returns the subscriber's AU channel.
@@ -69,35 +103,26 @@ func (s *AUSub) AccessUnits() <-chan [][]byte {
 	return s.C
 }
 
-// Run reads access units from source and broadcasts to all subscribers.
-// It blocks until the source channel is closed.
-func (h *AUHub) Run(source <-chan [][]byte) {
-	for au := range source {
-		isIDR := false
-		for _, nalu := range au {
-			if len(nalu) > 0 && (nalu[0]&0x1F) == 5 {
-				isIDR = true
-				break
-			}
+// Broadcast sends an access unit to all subscribers (non-blocking).
+// It caches IDR frames for late-joining subscribers.
+func (h *AUHub) Broadcast(au [][]byte) {
+	isIDR := false
+	for _, nalu := range au {
+		if len(nalu) > 0 && (nalu[0]&0x1F) == 5 {
+			isIDR = true
+			break
 		}
-
-		h.mu.Lock()
-		if isIDR {
-			h.lastIDR = au
-		}
-		for s := range h.subs {
-			select {
-			case s.C <- au:
-			default:
-			}
-		}
-		h.mu.Unlock()
 	}
 
 	h.mu.Lock()
+	if isIDR {
+		h.lastIDR = au
+	}
 	for s := range h.subs {
-		close(s.C)
-		delete(h.subs, s)
+		select {
+		case s.C <- au:
+		default:
+		}
 	}
 	h.mu.Unlock()
 }

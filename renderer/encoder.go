@@ -236,6 +236,9 @@ func (e *Encoder) waitAndRestart() {
 	default:
 	}
 
+	// Allocate a fresh AU channel for the new readNALUs goroutine.
+	e.aus = make(chan [][]byte, 4)
+
 	log.WithError(err).Warn("ffmpeg exited, restarting...")
 	if restartErr := e.startProcess(); restartErr != nil {
 		log.WithError(restartErr).Error("failed to restart ffmpeg")
@@ -268,7 +271,8 @@ func (e *Encoder) WriteFrame(frame []byte) error {
 func (e *Encoder) AccessUnits() <-chan [][]byte { return e.aus }
 
 // Stop gracefully shuts down the encoder: closes stdin to signal FFmpeg,
-// kills the process, and closes the access-unit channel. Safe to call multiple times.
+// kills the process. The access-unit channel is closed by readNALUs when
+// FFmpeg's stdout reaches EOF. Safe to call multiple times.
 func (e *Encoder) Stop() {
 	e.stopOnce.Do(func() {
 		close(e.done)
@@ -281,7 +285,6 @@ func (e *Encoder) Stop() {
 		}
 		e.running = false
 		e.mu.Unlock()
-		close(e.aus)
 	})
 }
 
@@ -296,6 +299,8 @@ var startCode3 = []byte{0x00, 0x00, 0x01}
 // or type 5=IDR slice) is encountered — at that point all accumulated NALUs
 // are flushed as a single access unit.
 func (e *Encoder) readNALUs(r io.Reader) {
+	defer close(e.aus)
+
 	buf := make([]byte, 1024*1024)
 	var acc []byte
 	var pendingAU [][]byte

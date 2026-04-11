@@ -17,6 +17,7 @@ import (
 	"github.com/ohcnetwork/mock-ptz-camera/renderer"
 	"github.com/ohcnetwork/mock-ptz-camera/rtsp"
 	"github.com/ohcnetwork/mock-ptz-camera/web"
+	
 )
 
 func main() {
@@ -73,7 +74,6 @@ func main() {
 	if err != nil {
 		log.WithError(err).Fatal("failed to start encoder")
 	}
-	defer encoder.Stop()
 
 	// Send a blank frame to extract SPS/PPS from the encoder
 	blankFrame := make([]byte, cfg.Width*cfg.Height*3)
@@ -81,11 +81,19 @@ func main() {
 		log.WithError(err).Fatal("failed to write blank frame")
 	}
 	encoder.WaitSPSPPS()
+	sps, pps := encoder.SPS(), encoder.PPS()
 	log.WithFields(log.Fields{
-		"sps_bytes": len(encoder.SPS()), "pps_bytes": len(encoder.PPS()),
+		"sps_bytes": len(sps), "pps_bytes": len(pps),
 	}).Debug("got SPS/PPS from encoder")
 
-	rtspServer, err := rtsp.NewServer(cfg.RTSPAddress(), creds, encoder.SPS(), encoder.PPS())
+	// Drain stale AU from the blank frame, then stop the bootstrap encoder.
+	select {
+	case <-encoder.AccessUnits():
+	default:
+	}
+	encoder.Stop()
+
+	rtspServer, err := rtsp.NewServer(cfg.RTSPAddress(), creds, sps, pps)
 	if err != nil {
 		log.WithError(err).Fatal("failed to create RTSP server")
 	}
@@ -100,18 +108,16 @@ func main() {
 		log.WithError(err).Fatal("failed to create RTP encoder")
 	}
 
-	// Drain stale AU from the blank frame used for SPS/PPS extraction
-	select {
-	case <-encoder.AccessUnits():
-	default:
-	}
+	auHub := web.NewAUHub(sps, pps)
 
-	auHub := web.NewAUHub(encoder.SPS(), encoder.PPS())
-	go auHub.Run(encoder.AccessUnits())
+	// Wire RTSP server to subscribe/unsubscribe from AUHub on session play/close.
+	rtspServer.SetSubscriber(func(bufSize int) rtsp.Subscription {
+		return auHub.Subscribe(bufSize)
+	}, rtpEncoder)
 
-	rtspSub := auHub.Subscribe(64)
-	go renderer.RenderLoop(activeRenderer, encoder, ptzState, cfg.FPS)
-	go rtsp.StreamLoop(rtspSub, rtpEncoder, rtspServer, cfg.FPS)
+	// Pipeline starts/stops the encoder and render loop on demand
+	// when the first/last AUHub subscriber arrives/leaves.
+	_ = NewPipeline(activeRenderer, ptzState, auHub, cfg.Width, cfg.Height, cfg.FPS, cfg.Bitrate)
 
 	onvifServer := onvif.NewServer(cfg, creds, ptzState, eventsService, hostIP)
 	webServer := web.NewServer(ptzState, creds, auHub, cfg.Width, cfg.Height)
