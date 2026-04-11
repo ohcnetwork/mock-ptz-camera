@@ -1,3 +1,20 @@
+// encoder.go implements the H.264 video encoder pipeline.
+//
+// It manages an FFmpeg subprocess that accepts raw YUV420P frames on stdin,
+// encodes them to H.264 using libx264 (ultrafast/zerolatency), and emits
+// Annex B NAL units on stdout. These NAL units are parsed into access units
+// (one per frame) and delivered via a channel for the RTSP stream loop.
+//
+// Key design decisions:
+//   - Single FFmpeg process with automatic restart on unexpected exit.
+//   - RGB24→I420 colour-space conversion is done in-process (rgb24ToI420)
+//     to feed FFmpeg's rawvideo input in the format it expects.
+//   - SPS/PPS parameter sets are captured from the encoder's first output
+//     and exposed via SPS()/PPS() for RTSP SDP negotiation.
+//   - H.264 level is auto-selected based on resolution and FPS to avoid
+//     the libx264 "MB size exceeds level limit" warning.
+//   - Access-unit channel has a capacity of 4 to absorb short encode
+//     latency spikes without blocking the render loop.
 package renderer
 
 import (
@@ -11,25 +28,34 @@ import (
 	ffmpeg "github.com/u2takey/ffmpeg-go"
 )
 
+// Encoder wraps an FFmpeg H.264 encoding subprocess.
+// It accepts raw RGB24 frames via WriteFrame, converts them to I420, pipes
+// them to FFmpeg, and parses the output Annex B stream into access units
+// available on the AccessUnits() channel.
 type Encoder struct {
-	width, height, fps int
-	cmd                *exec.Cmd
-	stdin              io.WriteCloser
-	aus                chan [][]byte // access units: each element is a slice of NALUs forming one frame
-	done               chan struct{}
-	stopOnce           sync.Once
-	mu                 sync.Mutex
-	running            bool
-	sps                []byte
-	pps                []byte
-	spsPPSReady        chan struct{}
-	spsPPSOnce         sync.Once
+	width, height, fps int        // output dimensions and frame rate
+	bitrate            string     // target bitrate string (e.g. "2M")
+	cmd                *exec.Cmd  // running FFmpeg process
+	stdin              io.WriteCloser // pipe to FFmpeg's stdin (raw YUV frames)
+	aus                chan [][]byte  // access units channel: each element is a slice of NALUs forming one frame
+	done               chan struct{}  // closed on Stop() to signal all goroutines
+	stopOnce           sync.Once     // ensures Stop() is idempotent
+	mu                 sync.Mutex    // protects cmd, stdin, running, sps, pps
+	running            bool          // true while FFmpeg process is alive
+	sps                []byte        // cached H.264 Sequence Parameter Set
+	pps                []byte        // cached H.264 Picture Parameter Set
+	spsPPSReady        chan struct{} // closed once SPS+PPS have been captured
+	spsPPSOnce         sync.Once     // ensures spsPPSReady is closed exactly once
 }
 
-func NewEncoder(width, height, fps int) (*Encoder, error) {
+// NewEncoder creates a new H.264 encoder with the given output parameters.
+// It immediately starts the FFmpeg subprocess. The bitrate string is passed
+// directly to FFmpeg's -b:v flag (e.g. "2M", "4000k").
+func NewEncoder(width, height, fps int, bitrate string) (*Encoder, error) {
 	e := &Encoder{
 		width: width, height: height, fps: fps,
-		aus:         make(chan [][]byte, 256),
+		bitrate:     bitrate,
+		aus:         make(chan [][]byte, 4),
 		done:        make(chan struct{}),
 		spsPPSReady: make(chan struct{}),
 	}
@@ -39,9 +65,13 @@ func NewEncoder(width, height, fps int) (*Encoder, error) {
 	return e, nil
 }
 
+// SPS returns a thread-safe copy of the H.264 Sequence Parameter Set.
 func (e *Encoder) SPS() []byte { return copyBytes(e, e.sps) }
+
+// PPS returns a thread-safe copy of the H.264 Picture Parameter Set.
 func (e *Encoder) PPS() []byte { return copyBytes(e, e.pps) }
 
+// copyBytes returns a mutex-protected copy of a byte slice.
 func copyBytes(e *Encoder, src []byte) []byte {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -55,29 +85,94 @@ func (e *Encoder) WaitSPSPPS() {
 	<-e.spsPPSReady
 }
 
+// h264Level returns the minimum H.264 level string for the given resolution and FPS.
+//
+// H.264 levels define constraints on macroblock counts (resolution) and
+// macroblock throughput (resolution × framerate). Each 16×16 pixel block
+// is one macroblock. For example, 1920×1080 = 120×68 = 8160 macroblocks,
+// which requires at least level 4.2 at 60fps.
+//
+// This function walks the level table from lowest to highest and returns
+// the first level that can accommodate both the frame size and frame rate.
+func h264Level(width, height, fps int) string {
+	mbW := (width + 15) / 16   // macroblock columns (rounded up)
+	mbH := (height + 15) / 16  // macroblock rows (rounded up)
+	mbPerFrame := mbW * mbH    // total macroblocks per frame
+	mbPerSec := mbPerFrame * fps // macroblock throughput
+
+	// Table: level → (max macroblocks per frame, max macroblocks per second)
+	levels := []struct {
+		name    string
+		maxMBs  int
+		maxMBps int
+	}{
+		{"3.0", 1620, 40500},
+		{"3.1", 3600, 108000},
+		{"3.2", 5120, 216000},
+		{"4.0", 8192, 245760},
+		{"4.1", 8192, 245760},
+		{"4.2", 8704, 522240},
+		{"5.0", 22080, 589824},
+		{"5.1", 36864, 983040},
+		{"5.2", 36864, 2073600},
+	}
+	for _, l := range levels {
+		if mbPerFrame <= l.maxMBs && mbPerSec <= l.maxMBps {
+			return l.name
+		}
+	}
+	return "5.2"
+}
+
+// buildStream constructs the FFmpeg command pipeline using ffmpeg-go.
+//
+// Encoding settings:
+//   - Input: rawvideo YUV420P on stdin at the configured resolution/FPS.
+//   - Codec: libx264 with "ultrafast" preset and "zerolatency" tune for
+//     minimal encoding latency and CPU usage.
+//   - Profile: baseline (no B-frames, simplest decode).
+//   - Level: auto-selected via h264Level() to match resolution/FPS.
+//   - Rate control: CBR using -b:v, -maxrate, -bufsize all set to bitrate.
+//   - GOP: one IDR frame per second (keyint = FPS).
+//   - Scene detection disabled (sc_threshold=0) for predictable IDR spacing.
+//   - Single thread to avoid contention with the Go render workers.
+//   - Output: raw H.264 Annex B on stdout.
 func (e *Encoder) buildStream() *ffmpeg.Stream {
+	gop := e.fps // 1 IDR per second (fewer expensive I-frames)
+	if gop < 1 {
+		gop = 1
+	}
+	level := h264Level(e.width, e.height, e.fps)
+	log.WithField("level", level).Info("auto-selected H.264 level")
+
 	return ffmpeg.Input("pipe:0", ffmpeg.KwArgs{
 		"f":       "rawvideo",
 		"pix_fmt": "rgb24",
 		"s":       fmt.Sprintf("%dx%d", e.width, e.height),
 		"r":       fmt.Sprintf("%d", e.fps),
 	}).Output("pipe:1", ffmpeg.KwArgs{
-		"pix_fmt":       "yuv420p",
 		"c:v":           "libx264",
 		"preset":        "ultrafast",
 		"tune":          "zerolatency",
 		"profile:v":     "baseline",
-		"level":         "3.1",
-		"crf":           "23",
-		"g":             fmt.Sprintf("%d", e.fps),
-		"slices":        "1",
-		"threads":       "1",
+		"level":         level,
+		"pix_fmt":       "yuv420p",
+		"b:v":           e.bitrate,
+		"maxrate":       e.bitrate,
+		"bufsize":       e.bitrate,
+		"g":             fmt.Sprintf("%d", gop),
+		"keyint_min":    fmt.Sprintf("%d", gop),
+		"sc_threshold":  "0",
 		"f":             "h264",
 		"an":            "",
 		"flush_packets": "1",
+		"threads":       "1",
 	}).GlobalArgs("-v", "warning").Silent(true)
 }
 
+// startProcess launches the FFmpeg subprocess and wires up stdin/stdout/stderr.
+// It spawns three goroutines: one to log stderr, one to parse NALUs from stdout,
+// and one to monitor the process and auto-restart on unexpected exit.
 func (e *Encoder) startProcess() error {
 	stream := e.buildStream()
 	cmd := stream.Compile()
@@ -113,6 +208,7 @@ func (e *Encoder) startProcess() error {
 	return nil
 }
 
+// logStderr continuously reads FFmpeg's stderr and logs any output as warnings.
 func (e *Encoder) logStderr(r io.Reader) {
 	buf := make([]byte, 4096)
 	for {
@@ -126,6 +222,8 @@ func (e *Encoder) logStderr(r io.Reader) {
 	}
 }
 
+// waitAndRestart blocks until FFmpeg exits, then restarts it unless Stop() was called.
+// This provides resilience against FFmpeg crashes or unexpected termination.
 func (e *Encoder) waitAndRestart() {
 	err := e.cmd.Wait()
 	e.mu.Lock()
@@ -144,6 +242,9 @@ func (e *Encoder) waitAndRestart() {
 	}
 }
 
+// WriteFrame writes a raw RGB24 frame directly to the FFmpeg subprocess's
+// stdin pipe. FFmpeg handles the RGB24→YUV420P conversion internally using
+// SIMD-optimised libswscale, which is faster than a pure Go conversion.
 func (e *Encoder) WriteFrame(frame []byte) error {
 	expected := e.width * e.height * 3
 	if len(frame) != expected {
@@ -160,8 +261,14 @@ func (e *Encoder) WriteFrame(frame []byte) error {
 	return err
 }
 
+
+// AccessUnits returns a read-only channel that delivers H.264 access units.
+// Each access unit is a slice of NAL units comprising exactly one encoded frame.
+// The RTSP stream loop reads from this channel to packetise frames into RTP.
 func (e *Encoder) AccessUnits() <-chan [][]byte { return e.aus }
 
+// Stop gracefully shuts down the encoder: closes stdin to signal FFmpeg,
+// kills the process, and closes the access-unit channel. Safe to call multiple times.
 func (e *Encoder) Stop() {
 	e.stopOnce.Do(func() {
 		close(e.done)
@@ -178,8 +285,16 @@ func (e *Encoder) Stop() {
 	})
 }
 
+// startCode3 is the 3-byte Annex B start code used to delimit NAL units.
 var startCode3 = []byte{0x00, 0x00, 0x01}
 
+// readNALUs continuously reads FFmpeg's stdout, splits the Annex B byte stream
+// into individual NAL units, captures SPS/PPS parameter sets, and groups
+// NALUs into access units (one per frame) sent on the aus channel.
+//
+// An access unit is considered complete when a VCL NALU (type 1=non-IDR slice
+// or type 5=IDR slice) is encountered — at that point all accumulated NALUs
+// are flushed as a single access unit.
 func (e *Encoder) readNALUs(r io.Reader) {
 	buf := make([]byte, 1024*1024)
 	var acc []byte
@@ -250,8 +365,16 @@ func (e *Encoder) readNALUs(r io.Reader) {
 }
 
 // extractOneNALU extracts one complete NALU from an Annex B byte stream.
-// Returns the NALU data (without start code), remaining data, and success flag.
-// Uses the same trailing-zero handling as the official h264.AnnexB parser.
+//
+// The Annex B format delimits NALUs with start codes (00 00 01 or 00 00 00 01).
+// This function finds the first start code, then scans for the next one to
+// determine the NALU boundary. Trailing zero bytes that belong to the next
+// start code are excluded from the NALU data.
+//
+// Returns:
+//   - nalu: the raw NALU bytes (without start code prefix)
+//   - rest: remaining unparsed data (positioned at the next start code)
+//   - ok:   false if no complete NALU could be extracted (need more data)
 func extractOneNALU(data []byte) (nalu []byte, rest []byte, ok bool) {
 	// Find first start code
 	start := bytes.Index(data, startCode3)

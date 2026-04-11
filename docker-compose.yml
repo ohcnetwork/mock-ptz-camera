@@ -1,6 +1,7 @@
 services:
   mock-ptz-camera:
     build: .
+    image: ghcr.io/ohcnetwork/mock-ptz-camera:latest
     ports:
       - "8554:8554"
       - "8080:8080"

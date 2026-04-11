@@ -14,6 +14,7 @@ type Config struct {
 	Width     int
 	Height    int
 	FPS       int
+	Bitrate   string
 	LogLevel  string
 	Renderer  string
 	PanoImage string
@@ -29,6 +30,7 @@ func Load() *Config {
 		Width:     envIntOrDefault("WIDTH", 1280),
 		Height:    envIntOrDefault("HEIGHT", 720),
 		FPS:       envIntOrDefault("FPS", 30),
+		Bitrate:   envOrDefault("BITRATE", "2M"),
 		LogLevel:  envOrDefault("LOG_LEVEL", "info"),
 		Renderer:  envOrDefault("RENDERER", "pano"),
 		PanoImage: envOrDefault("PANO_IMAGE", "assets/default_pano.jpg"),

@@ -1,3 +1,15 @@
+// jpeg.go provides JPEG encoding utilities for converting RGB24 frame buffers
+// to JPEG images, used by the MJPEG web preview stream.
+//
+// Two APIs are provided:
+//   - EncodeJPEG: one-shot function that allocates fresh buffers each call.
+//     Simple but causes GC pressure at high frame rates.
+//   - JPEGEncoder: reusable encoder that pre-allocates an RGBA buffer and
+//     reuses it across frames, eliminating per-frame allocation. The alpha
+//     channel is pre-filled to 0xFF once at creation time.
+//
+// The render loop uses JPEGEncoder for the MJPEG stream (capped at ~15fps)
+// to minimise allocation overhead.
 package renderer
 
 import (
@@ -7,9 +19,21 @@ import (
 )
 
 // EncodeJPEG converts an RGB24 frame buffer to JPEG bytes.
+// This is a one-shot convenience function that allocates fresh buffers.
+// For high-frequency encoding, prefer JPEGEncoder which reuses buffers.
 func EncodeJPEG(rgb []byte, width, height int) ([]byte, error) {
-	img := &image.NRGBA{
-		Pix:    rgbToNRGBA(rgb, width, height),
+	pix := make([]byte, width*height*4)
+	si, di := 0, 0
+	for di < len(pix) {
+		pix[di] = rgb[si]
+		pix[di+1] = rgb[si+1]
+		pix[di+2] = rgb[si+2]
+		pix[di+3] = 255
+		si += 3
+		di += 4
+	}
+	img := &image.RGBA{
+		Pix:    pix,
 		Stride: width * 4,
 		Rect:   image.Rect(0, 0, width, height),
 	}
@@ -23,36 +47,43 @@ func EncodeJPEG(rgb []byte, width, height int) ([]byte, error) {
 // JPEGEncoder reuses buffers across frames to avoid per-frame allocation.
 type JPEGEncoder struct {
 	width, height int
-	nrgba         []byte
-	img           *image.NRGBA
+	rgba          []byte
+	img           *image.RGBA
 	buf           bytes.Buffer
 	opts          *jpeg.Options
 }
 
 // NewJPEGEncoder creates a reusable JPEG encoder for the given frame size.
 func NewJPEGEncoder(width, height int) *JPEGEncoder {
-	nrgba := make([]byte, width*height*4)
+	rgba := make([]byte, width*height*4)
+	// Pre-fill alpha channel once; Encode only updates RGB bytes.
+	for i := 3; i < len(rgba); i += 4 {
+		rgba[i] = 255
+	}
 	return &JPEGEncoder{
 		width:  width,
 		height: height,
-		nrgba:  nrgba,
-		img: &image.NRGBA{
-			Pix:    nrgba,
+		rgba:   rgba,
+		img: &image.RGBA{
+			Pix:    rgba,
 			Stride: width * 4,
 			Rect:   image.Rect(0, 0, width, height),
 		},
-		opts: &jpeg.Options{Quality: 75},
+		opts: &jpeg.Options{Quality: 50},
 	}
 }
 
 // Encode converts an RGB24 frame to JPEG, reusing internal buffers.
 func (je *JPEGEncoder) Encode(rgb []byte) ([]byte, error) {
-	n := je.width * je.height
-	for i := 0; i < n; i++ {
-		je.nrgba[i*4] = rgb[i*3]
-		je.nrgba[i*4+1] = rgb[i*3+1]
-		je.nrgba[i*4+2] = rgb[i*3+2]
-		je.nrgba[i*4+3] = 255
+	dst := je.rgba
+	si, di := 0, 0
+	for di < len(dst) {
+		dst[di] = rgb[si]
+		dst[di+1] = rgb[si+1]
+		dst[di+2] = rgb[si+2]
+		// Alpha byte at dst[di+3] already 0xFF from init.
+		si += 3
+		di += 4
 	}
 	je.buf.Reset()
 	if err := jpeg.Encode(&je.buf, je.img, je.opts); err != nil {
@@ -61,16 +92,4 @@ func (je *JPEGEncoder) Encode(rgb []byte) ([]byte, error) {
 	out := make([]byte, je.buf.Len())
 	copy(out, je.buf.Bytes())
 	return out, nil
-}
-
-// rgbToNRGBA converts packed RGB24 bytes to NRGBA pixel data.
-func rgbToNRGBA(rgb []byte, w, h int) []byte {
-	nrgba := make([]byte, w*h*4)
-	for i := 0; i < w*h; i++ {
-		nrgba[i*4+0] = rgb[i*3+0]
-		nrgba[i*4+1] = rgb[i*3+1]
-		nrgba[i*4+2] = rgb[i*3+2]
-		nrgba[i*4+3] = 255
-	}
-	return nrgba
 }

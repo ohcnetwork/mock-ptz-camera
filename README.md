@@ -68,6 +68,7 @@ All settings are configurable via environment variables:
 | `WIDTH` | `1280` | Output resolution width |
 | `HEIGHT` | `720` | Output resolution height |
 | `FPS` | `30` | Output frame rate |
+| `BITRATE` | `2M` | H.264 CBR target bitrate (e.g. `1M`, `2M`, `4M`) |
 | `LOG_LEVEL` | `info` | Log verbosity (`debug`, `info`, `warn`, `error`) |
 | `RENDERER` | `pano` | Renderer type: `pano` or `testpattern` |
 | `PANO_IMAGE` | `assets/default_pano.jpg` | Path to equirectangular panoramic image (used when `RENDERER=pano`) |

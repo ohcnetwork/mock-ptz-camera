@@ -1,7 +1,8 @@
 package rtsp
 
 import (
-	"sync"
+	"sync/atomic"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 
@@ -20,11 +21,12 @@ type Server struct {
 	stream *gortsplib.ServerStream
 	Format *format.H264
 	creds  auth.Credentials
-	mu     sync.Mutex
 }
 
 type serverHandler struct {
-	s *Server
+	s          *Server
+	dropCount  atomic.Int64
+	lastDropLog atomic.Int64 // unix nanos
 }
 
 func NewServer(address string, creds auth.Credentials, sps, pps []byte) (*Server, error) {
@@ -43,7 +45,7 @@ func NewServer(address string, creds auth.Credentials, sps, pps []byte) (*Server
 	s.lib = &gortsplib.Server{
 		Handler:        &serverHandler{s: s},
 		RTSPAddress:    address,
-		WriteQueueSize: 512,
+		WriteQueueSize: 1024,
 	}
 
 	return s, nil
@@ -81,10 +83,8 @@ func (s *Server) Close() {
 	s.lib.Close()
 }
 
-func (s *Server) WritePacketRTP(pkt *rtp.Packet) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.stream.WritePacketRTP(s.stream.Desc.Medias[0], pkt)
+func (s *Server) WritePacketRTP(pkt *rtp.Packet) {
+	s.stream.WritePacketRTP(s.stream.Desc.Medias[0], pkt) //nolint:errcheck // errors are per-session, handled via OnStreamWriteError
 }
 
 // authenticate checks RTSP digest auth and returns an unauthorized response if it fails.
@@ -128,6 +128,23 @@ func (h *serverHandler) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*base.R
 func (h *serverHandler) OnPlay(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Response, error) {
 	log.Info("RTSP client started playing")
 	return &base.Response{StatusCode: base.StatusOK}, nil
+}
+
+// OnStreamWriteError is called by gortsplib when a per-session write queue
+// overflows. This replaces the default log.Println with rate-limited warnings.
+// Each session has its own ring buffer — drops for one slow client do NOT
+// affect other clients. We intentionally do NOT influence StreamLoop here
+// because skipping frames globally would corrupt video for healthy clients.
+func (h *serverHandler) OnStreamWriteError(ctx *gortsplib.ServerHandlerOnStreamWriteErrorCtx) {
+	count := h.dropCount.Add(1)
+	last := h.lastDropLog.Load()
+	now := time.Now().UnixNano()
+	if now-last >= int64(5*time.Second) {
+		if h.lastDropLog.CompareAndSwap(last, now) {
+			log.WithField("dropped_packets", count).Warn("slow RTSP client: packets dropped from session queue")
+			h.dropCount.Store(0)
+		}
+	}
 }
 
 func (h *serverHandler) OnAnnounce(ctx *gortsplib.ServerHandlerOnAnnounceCtx) (*base.Response, error) {

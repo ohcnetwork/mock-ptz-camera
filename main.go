@@ -69,7 +69,7 @@ func main() {
 		log.Info("using test pattern renderer")
 	}
 
-	encoder, err := renderer.NewEncoder(cfg.Width, cfg.Height, cfg.FPS)
+	encoder, err := renderer.NewEncoder(cfg.Width, cfg.Height, cfg.FPS, cfg.Bitrate)
 	if err != nil {
 		log.WithError(err).Fatal("failed to start encoder")
 	}

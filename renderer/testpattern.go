@@ -1,18 +1,32 @@
+// testpattern.go provides a synthetic test-pattern renderer for development
+// and testing without requiring a panoramic source image.
+//
+// The test pattern consists of:
+//   - A checkerboard grid that responds to pan/tilt (viewport offset) and
+//     zoom (grid scale), simulating PTZ camera movement.
+//   - Colour-tinted quadrants for orientation reference.
+//   - Red horizontal and blue vertical axis lines through the origin.
+//   - A centre crosshair overlay and OSD info panel.
+//
+// TestRenderer implements the Renderer interface and can be used as a
+// drop-in replacement for PanoRenderer when no panoramic image is available.
 package renderer
 
 import (
-	"image/color"
 	"math"
 
 	"github.com/ohcnetwork/mock-ptz-camera/ptz"
 )
 
-// TestRenderer generates a test pattern frame with PTZ simulation.
+// TestRenderer generates synthetic test pattern frames for development.
+// It implements the Renderer interface and responds to PTZ input by shifting
+// the viewport offset and adjusting the grid scale.
 type TestRenderer struct {
-	width, height int
-	buf           []byte
+	width, height int    // output frame dimensions
+	buf           []byte // reusable RGB24 frame buffer
 }
 
+// NewTestRenderer creates a test pattern renderer for the given output dimensions.
 func NewTestRenderer(width, height int) *TestRenderer {
 	return &TestRenderer{
 		width:  width,
@@ -21,7 +35,9 @@ func NewTestRenderer(width, height int) *TestRenderer {
 	}
 }
 
-// Render generates a test pattern frame based on the PTZ position.
+// Render produces a test pattern frame with crosshair and OSD overlay.
+// The pattern includes a grid, axis lines, and quadrant tinting that all
+// respond to the current PTZ position.
 func (t *TestRenderer) Render(pos ptz.Position, fps float64) []byte {
 	t.renderPattern(pos)
 	DrawCrosshair(t.buf, t.width, t.height)
@@ -29,6 +45,9 @@ func (t *TestRenderer) Render(pos ptz.Position, fps float64) []byte {
 	return t.buf
 }
 
+// renderPattern generates the checkerboard test grid with axis lines.
+// The grid scale increases with zoom, and the viewport is offset by
+// pan (horizontal) and tilt (vertical) to simulate camera movement.
 func (t *TestRenderer) renderPattern(pos ptz.Position) {
 	w, h := t.width, t.height
 
@@ -102,12 +121,5 @@ func (t *TestRenderer) renderPattern(pos ptz.Position) {
 			t.buf[idx+1] = g
 			t.buf[idx+2] = b
 		}
-	}
-}
-
-func setPixel(frame []byte, width, x, y int, c color.RGBA) {
-	idx := (y*width + x) * 3
-	if idx >= 0 && idx+2 < len(frame) {
-		frame[idx], frame[idx+1], frame[idx+2] = c.R, c.G, c.B
 	}
 }
