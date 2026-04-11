@@ -417,7 +417,7 @@
   </header>
   <div class="main-content">
     <div class="video-panel">
-      <img id="videoFeed" src="/api/stream" alt="Camera Feed">
+      <img id="videoFeed" alt="Camera Feed">
       <div class="status-bar">
         <span>Pan: <span id="sPan">0.000</span></span>
         <span>Tilt: <span id="sTilt">0.000</span></span>
@@ -611,6 +611,8 @@
   }
 
   // WebSocket
+  let connectTimer = null;
+
   function connectWS() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const url = `${proto}//${location.host}/ws`;
@@ -622,19 +624,33 @@
       return;
     }
 
+    // If the browser is stuck on a stale TCP connection (e.g. after server restart),
+    // the WS handshake hangs for ~30s until TCP retransmit timeout. Abort early and retry.
+    connectTimer = setTimeout(() => {
+      if (ws && ws.readyState !== WebSocket.OPEN) {
+        console.warn('[ws] connect timeout, retrying...');
+        ws.onclose = null; // prevent scheduleReconnect from firing twice
+        ws.close();
+        scheduleReconnect();
+      }
+    }, 5000);
+
     ws.onopen = () => {
+      clearTimeout(connectTimer);
       document.getElementById('wsDot').classList.add('connected');
       document.getElementById('wsLabel').textContent = 'Connected';
       send({ type: 'get_status' });
       send({ type: 'get_presets' });
-      // Reload MJPEG stream in case it broke during server restart
-      const feed = document.getElementById('videoFeed');
-      feed.src = '/api/stream?' + Date.now();
+      // Start MJPEG stream after WS connects to avoid hogging a connection slot
+      document.getElementById('videoFeed').src = '/api/stream?' + Date.now();
     };
 
     ws.onclose = () => {
+      clearTimeout(connectTimer);
       document.getElementById('wsDot').classList.remove('connected');
       document.getElementById('wsLabel').textContent = 'Disconnected';
+      // Release the MJPEG connection so the browser can use the slot for WS reconnect
+      document.getElementById('videoFeed').removeAttribute('src');
       scheduleReconnect();
     };
 
