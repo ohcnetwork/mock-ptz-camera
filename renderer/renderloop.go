@@ -25,6 +25,8 @@ func RenderLoop(r Renderer, encoder *Encoder, ptzState *ptz.State, fps int, widt
 	ticker := time.NewTicker(frameDuration)
 	defer ticker.Stop()
 
+	jpegEnc := NewJPEGEncoder(width, height)
+
 	var measuredFPS float64
 	var frameCount int
 	var logFrames int
@@ -40,7 +42,7 @@ func RenderLoop(r Renderer, encoder *Encoder, ptzState *ptz.State, fps int, widt
 			continue
 		}
 
-		if jpegData, err := EncodeJPEG(frame, width, height); err == nil {
+		if jpegData, err := jpegEnc.Encode(frame); err == nil {
 			sink.SetFrame(jpegData)
 		}
 

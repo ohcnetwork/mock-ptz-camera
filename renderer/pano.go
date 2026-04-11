@@ -8,7 +8,9 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 
 	log "github.com/sirupsen/logrus"
 
@@ -24,6 +26,8 @@ type PanoRenderer struct {
 	// Source equirectangular image stored as RGB24.
 	srcRGB     []byte
 	srcW, srcH int
+
+	numWorkers int
 }
 
 // NewPanoRenderer loads an equirectangular image and returns a renderer that
@@ -37,13 +41,19 @@ func NewPanoRenderer(width, height int, imagePath string) (*PanoRenderer, error)
 		"path": imagePath, "src_width": srcW, "src_height": srcH,
 	}).Info("loaded panoramic image")
 
+	nw := runtime.NumCPU()
+	if nw < 1 {
+		nw = 1
+	}
+
 	return &PanoRenderer{
-		width:  width,
-		height: height,
-		buf:    make([]byte, width*height*3),
-		srcRGB: srcRGB,
-		srcW:   srcW,
-		srcH:   srcH,
+		width:      width,
+		height:     height,
+		buf:        make([]byte, width*height*3),
+		srcRGB:     srcRGB,
+		srcW:       srcW,
+		srcH:       srcH,
+		numWorkers: nw,
 	}, nil
 }
 
@@ -52,71 +62,122 @@ func NewPanoRenderer(width, height int, imagePath string) (*PanoRenderer, error)
 func (p *PanoRenderer) Render(pos ptz.Position, fps float64) []byte {
 	w, h := p.width, p.height
 
-	// Map PTZ values to camera orientation.
-	// Pan: -1..+1 → yaw -π..+π (full 360°)
 	yaw := pos.Pan * math.Pi
-	// Tilt: TiltHorizon (0.8) = horizontal (pitch 0), -1.0 = nadir (pitch -π/2)
 	pitch := (pos.Tilt - ptz.TiltHorizon) * math.Pi / (2.0 * (ptz.TiltHorizon - ptz.TiltMin))
-	// Zoom: 0..1 → horizontal FOV from 90° down to ~4.5°
 	fovH := (math.Pi / 2.0) / pos.ZoomX()
 
-	// Precompute rotation sin/cos.
 	sinY, cosY := math.Sincos(yaw)
 	sinP, cosP := math.Sincos(pitch)
 
-	// Half-dimensions for NDC mapping.
 	halfW := float64(w) / 2.0
 	halfH := float64(h) / 2.0
 	focalLen := halfW / math.Tan(fovH/2.0)
 
-	srcWf := float64(p.srcW)
-	srcHf := float64(p.srcH)
+	srcW := p.srcW
+	srcH := p.srcH
+	srcWf := float64(srcW)
+	srcHf := float64(srcH)
+	srcRGB := p.srcRGB
+	srcStride := srcW * 3
+	buf := p.buf
 
-	for py := 0; py < h; py++ {
-		// Camera-space y: positive up.
-		cy := halfH - float64(py) - 0.5
-		rowIdx := py * w * 3
+	invTwoPi := 0.5 / math.Pi
+	invPi := 1.0 / math.Pi
 
-		for px := 0; px < w; px++ {
-			cx := float64(px) - halfW + 0.5
+	var wg sync.WaitGroup
+	rowsPerWorker := (h + p.numWorkers - 1) / p.numWorkers
 
-			// Ray direction in camera space (looking along +Z).
-			dx := cx
-			dy := cy
-			dz := focalLen
-
-			// Normalize.
-			invLen := 1.0 / math.Sqrt(dx*dx+dy*dy+dz*dz)
-			dx *= invLen
-			dy *= invLen
-			dz *= invLen
-
-			// Rotate by pitch (around X axis, positive = look up).
-			dy2 := dy*cosP + dz*sinP
-			dz2 := -dy*sinP + dz*cosP
-
-			// Rotate by yaw (around Y axis).
-			dx3 := dx*cosY + dz2*sinY
-			dz3 := -dx*sinY + dz2*cosY
-			dy3 := dy2
-
-			// Convert to spherical coordinates → equirectangular UV.
-			theta := math.Atan2(dx3, dz3)       // azimuth: -π..+π
-			phi := math.Asin(ptz.Clamp(dy3, -1, 1)) // elevation: -π/2..+π/2
-
-			// Map to source image pixel coordinates.
-			u := (theta/(2*math.Pi) + 0.5) * srcWf // 0..srcW
-			v := (0.5 - phi/math.Pi) * srcHf       // 0..srcH
-
-			// Bilinear sample.
-			r, g, b := p.sampleBilinear(u, v)
-
-			idx := rowIdx + px*3
-			p.buf[idx] = r
-			p.buf[idx+1] = g
-			p.buf[idx+2] = b
+	for worker := 0; worker < p.numWorkers; worker++ {
+		startRow := worker * rowsPerWorker
+		endRow := startRow + rowsPerWorker
+		if endRow > h {
+			endRow = h
 		}
+		if startRow >= endRow {
+			break
+		}
+
+		wg.Add(1)
+		go func(startRow, endRow int) {
+			defer wg.Done()
+			for py := startRow; py < endRow; py++ {
+				cy := halfH - float64(py) - 0.5
+				rowIdx := py * w * 3
+
+				for px := 0; px < w; px++ {
+					cx := float64(px) - halfW + 0.5
+
+					dx := cx
+					dy := cy
+					dz := focalLen
+
+					invLen := 1.0 / math.Sqrt(dx*dx+dy*dy+dz*dz)
+					dx *= invLen
+					dy *= invLen
+					dz *= invLen
+
+					dy2 := dy*cosP + dz*sinP
+					dz2 := -dy*sinP + dz*cosP
+
+					dx3 := dx*cosY + dz2*sinY
+					dz3 := -dx*sinY + dz2*cosY
+					dy3 := dy2
+
+					theta := fastAtan2(dx3, dz3)
+					d := dy3
+					if d < -1 {
+						d = -1
+					} else if d > 1 {
+						d = 1
+					}
+					phi := fastAsin(d)
+
+					u := (theta*invTwoPi + 0.5) * srcWf
+					v := (0.5 - phi*invPi) * srcHf
+
+					// Inline bilinear interpolation.
+					u = u - math.Floor(u/srcWf)*srcWf
+					if v < 0 {
+						v = 0
+					} else if v >= srcHf-1 {
+						v = srcHf - 1.001
+					}
+
+					x0 := int(u)
+					y0 := int(v)
+					fracX := u - float64(x0)
+					fracY := v - float64(y0)
+
+					x1 := x0 + 1
+					if x1 >= srcW {
+						x1 = 0
+					}
+					y1 := y0 + 1
+					if y1 >= srcH {
+						y1 = srcH - 1
+					}
+
+					i00 := y0*srcStride + x0*3
+					i10 := y0*srcStride + x1*3
+					i01 := y1*srcStride + x0*3
+					i11 := y1*srcStride + x1*3
+
+					fx1 := 1 - fracX
+					fy1 := 1 - fracY
+					w00 := fx1 * fy1
+					w10 := fracX * fy1
+					w01 := fx1 * fracY
+					w11 := fracX * fracY
+
+					idx := rowIdx + px*3
+					buf[idx] = uint8(float64(srcRGB[i00])*w00 + float64(srcRGB[i10])*w10 + float64(srcRGB[i01])*w01 + float64(srcRGB[i11])*w11)
+					buf[idx+1] = uint8(float64(srcRGB[i00+1])*w00 + float64(srcRGB[i10+1])*w10 + float64(srcRGB[i01+1])*w01 + float64(srcRGB[i11+1])*w11)
+					buf[idx+2] = uint8(float64(srcRGB[i00+2])*w00 + float64(srcRGB[i10+2])*w10 + float64(srcRGB[i01+2])*w01 + float64(srcRGB[i11+2])*w11)
+				}
+			}
+		}(startRow, endRow)
 	}
+	wg.Wait()
 
 	DrawCrosshair(p.buf, w, h)
 	DrawOSD(p.buf, w, h, pos, fps)
@@ -215,4 +276,62 @@ func loadImageRGB(path string) ([]byte, int, int, error) {
 	}
 
 	return rgb, w, h, nil
+}
+
+// fastAtan2 is a polynomial approximation of math.Atan2, accurate to ~0.005 rad.
+// Uses a minimax rational approximation to avoid the expensive libm atan2.
+func fastAtan2(y, x float64) float64 {
+	if x == 0 && y == 0 {
+		return 0
+	}
+	ax := x
+	if ax < 0 {
+		ax = -ax
+	}
+	ay := y
+	if ay < 0 {
+		ay = -ay
+	}
+
+	// Ensure we compute atan of the smaller ratio for better accuracy.
+	var a float64
+	if ay < ax {
+		a = ay / ax
+	} else {
+		a = ax / ay
+	}
+
+	// Polynomial minimax approximation for atan(a) on [0,1].
+	s := a * a
+	r := ((-0.0464964749*s+0.15931422)*s-0.327622764)*s*a + a
+
+	if ay > ax {
+		r = math.Pi/2 - r
+	}
+	if x < 0 {
+		r = math.Pi - r
+	}
+	if y < 0 {
+		r = -r
+	}
+	return r
+}
+
+// fastAsin is a polynomial approximation of math.Asin, accurate to ~0.0002 rad.
+func fastAsin(x float64) float64 {
+	neg := false
+	if x < 0 {
+		x = -x
+		neg = true
+	}
+	if x > 1 {
+		x = 1
+	}
+	// Handbook approximation (Abramowitz & Stegun 4.4.45).
+	r := ((-0.0187293*x+0.0742610)*x-0.2121144)*x + 1.5707288
+	r = math.Pi/2 - math.Sqrt(1.0-x)*r
+	if neg {
+		return -r
+	}
+	return r
 }
