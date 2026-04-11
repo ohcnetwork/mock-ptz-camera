@@ -7,6 +7,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/pion/rtp v1.10.1
 	github.com/sirupsen/logrus v1.9.4
+	github.com/u2takey/ffmpeg-go v0.5.0
 )
 
 require (
@@ -20,7 +21,6 @@ require (
 	github.com/pion/sdp/v3 v3.0.18 // indirect
 	github.com/pion/srtp/v3 v3.0.10 // indirect
 	github.com/pion/transport/v4 v4.0.1 // indirect
-	github.com/u2takey/ffmpeg-go v0.5.0 // indirect
 	github.com/u2takey/go-utils v0.3.1 // indirect
 	golang.org/x/net v0.52.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
