@@ -106,13 +106,15 @@ func main() {
 	default:
 	}
 
-	frameStore := web.NewFrameStore()
+	auHub := web.NewAUHub(encoder.SPS(), encoder.PPS())
+	go auHub.Run(encoder.AccessUnits())
 
-	go renderer.RenderLoop(activeRenderer, encoder, ptzState, cfg.FPS, cfg.Width, cfg.Height, frameStore)
-	go rtsp.StreamLoop(encoder, rtpEncoder, rtspServer, cfg.FPS)
+	rtspSub := auHub.Subscribe(64)
+	go renderer.RenderLoop(activeRenderer, encoder, ptzState, cfg.FPS)
+	go rtsp.StreamLoop(rtspSub, rtpEncoder, rtspServer, cfg.FPS)
 
 	onvifServer := onvif.NewServer(cfg, creds, ptzState, eventsService, hostIP)
-	webServer := web.NewServer(ptzState, creds, frameStore)
+	webServer := web.NewServer(ptzState, creds, auHub, cfg.Width, cfg.Height)
 
 	mux := http.NewServeMux()
 	onvifServer.RegisterRoutes(mux)

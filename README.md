@@ -1,6 +1,6 @@
 # Mock PTZ Camera
 
-A software-defined mock PTZ (Pan-Tilt-Zoom) IP camera with RTSP streaming, ONVIF control, and a built-in web UI. By default it renders a perspective view into a 360° panoramic image that responds to PTZ commands, streams the result as H.264 over RTSP, and provides an MJPEG preview in the browser.
+A software-defined mock PTZ (Pan-Tilt-Zoom) IP camera with RTSP streaming, ONVIF control, and a built-in web UI. By default it renders a perspective view into a 360° panoramic image that responds to PTZ commands, streams the result as H.264 over RTSP, and provides a low-latency H.264 preview in the browser via WebCodecs.
 
 ![Mock PTZ Camera Web UI](docs/assets/screenshot1.png)
 
@@ -11,7 +11,7 @@ A software-defined mock PTZ (Pan-Tilt-Zoom) IP camera with RTSP streaming, ONVIF
 - **PTZ Control** — ContinuousMove, AbsoluteMove, RelativeMove, Stop, Presets
 - **360° Panoramic Renderer** — Simulates a PTZ camera navigating an equirectangular 360° panoramic image with perspective projection (default)
 - **Test Pattern Renderer** — Built-in test pattern with crosshair and zoom indicator (no video file needed)
-- **Web UI** — MJPEG live preview with D-pad, zoom, speed, absolute move, and preset controls over WebSocket
+- **Web UI** — Low-latency H.264 live preview (via WebCodecs VideoDecoder) with D-pad, zoom, speed, absolute move, and preset controls over WebSocket
 - **API Test UI** — Built-in ONVIF endpoint tester with manual and automated test modes
 - **WS-Discovery** — Responds to ONVIF probe messages on `239.255.255.250:3702`
 - **Unified Auth** — Single credential set for ONVIF, RTSP, and Web UI (Basic auth)
@@ -21,16 +21,20 @@ A software-defined mock PTZ (Pan-Tilt-Zoom) IP camera with RTSP streaming, ONVIF
 ```
 [Test Pattern / Pano Renderer] ← PTZ State ← ONVIF PTZ / WebSocket commands
           ↓
-   [FFmpeg Encoder] → H.264 NALUs → [RTP Packetizer] → RTSP Server → clients
-          ↓
-   [JPEG Encoder] → MJPEG frames → Web UI (browser)
+   [FFmpeg Encoder] → H.264 NALUs → [AUHub fan-out]
+                                        ↓           ↓
+                              [RTP Packetizer]   [WebSocket]
+                                    ↓                ↓
+                              RTSP Server        Web UI (WebCodecs)
 ```
 
-Two goroutines drive the pipeline:
+Three goroutines drive the pipeline:
 
-1. **Render loop** (`renderer.RenderLoop`) — Ticks at the configured FPS. Each tick reads the current PTZ position, renders a test-pattern frame as raw RGB24, writes it to the FFmpeg encoder for H.264, and simultaneously JPEG-encodes the same RGB buffer for the web MJPEG stream. The two encodings serve different consumers (RTSP vs browser) and encoding JPEG directly from the raw pixels is cheaper than decoding H.264 back.
+1. **Render loop** (`renderer.RenderLoop`) — Ticks at the configured FPS. Each tick reads the current PTZ position, renders a frame as raw RGB24, and writes it to the FFmpeg encoder.
 
-2. **Stream loop** (`rtsp.StreamLoop`) — Consumes H.264 access units (NALUs) from the encoder's output channel, wraps them into RTP packets via `rtph264.Encoder` and writes them to connected RTSP clients through gortsplib.
+2. **AU Hub** (`web.AUHub.Run`) — Reads H.264 access units from the encoder's output channel and fans them out to all subscribers (RTSP and WebSocket clients) via non-blocking sends.
+
+3. **Stream loop** (`rtsp.StreamLoop`) — Subscribes to the AU Hub, wraps access units into RTP packets via `rtph264.Encoder`, and writes them to connected RTSP clients through gortsplib.
 
 ## Quick Start
 
@@ -78,8 +82,8 @@ All settings are configurable via environment variables:
 
 - **Web UI**: `http://<host>:8080/` (Basic auth)
 - **API Test UI**: `http://<host>:8080/test` (Basic auth)
-- **MJPEG Stream**: `http://<host>:8080/api/stream` (Basic auth)
-- **WebSocket**: `ws://<host>:8080/ws`
+- **Video WebSocket**: `ws://<host>:8080/ws/video` (H.264 Annex B via WebCodecs)
+- **Control WebSocket**: `ws://<host>:8080/ws` (PTZ commands)
 - **RTSP Stream**: `rtsp://<host>:8554/stream`
 - **ONVIF Device Service**: `http://<host>:8080/onvif/device_service`
 - **ONVIF Media Service**: `http://<host>:8080/onvif/media_service`
@@ -90,7 +94,7 @@ All settings are configurable via environment variables:
 
 ### Web UI
 
-Open `http://localhost:8080` in a browser (credentials: `admin` / `admin`). The UI provides live MJPEG preview and PTZ controls including D-pad, zoom, speed slider, absolute move, presets, and keyboard shortcuts.
+Open `http://localhost:8080` in a browser (credentials: `admin` / `admin`). The UI provides a low-latency H.264 live preview and PTZ controls including D-pad, zoom, speed slider, absolute move, presets, and keyboard shortcuts. Requires a browser with WebCodecs support (Chrome 94+, Edge 94+, Safari 16.4+).
 
 **Keyboard shortcuts:**
 
@@ -150,8 +154,7 @@ The camera is discoverable via WS-Discovery and compatible with ONVIF Device Man
 ├── ptz/                 # PTZ state machine (position, velocity, presets)
 ├── renderer/
 │   ├── encoder.go       # FFmpeg H.264 encoder subprocess
-│   ├── renderloop.go    # Frame render loop (drives encoder + JPEG snapshot)
-│   ├── jpeg.go          # RGB24 → JPEG conversion for MJPEG stream
+│   ├── renderloop.go    # Frame render loop (drives encoder)
 │   ├── testpattern.go   # Test pattern image renderer
 │   ├── pano.go          # 360° panoramic image renderer
 │   ├── osd.go           # Shared OSD (crosshair, text overlay, flip)
@@ -171,8 +174,7 @@ The camera is discoverable via WS-Discovery and compatible with ONVIF Device Man
 ├── web/
 │   ├── server.go        # HTTP server, route registration, auth middleware
 │   ├── websocket.go     # WebSocket PTZ command handler
-│   ├── mjpeg.go         # MJPEG multipart stream handler
-│   ├── framestore.go    # Thread-safe JPEG frame store
+│   ├── auhub.go         # H.264 access unit fan-out hub (encoder → RTSP + WebSocket)
 │   └── static/
 │       ├── index.html   # Camera control UI (single-page, shadcn-inspired dark theme)
 │       ├── test.html    # API test UI with manual and automated test runner

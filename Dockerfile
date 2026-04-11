@@ -14,8 +14,8 @@ FROM alpine:3.23
 RUN apk add --no-cache ffmpeg
 
 WORKDIR /app
-COPY --from=builder /app/mock-ptz-camera .
 COPY --from=builder /app/assets ./assets/
+COPY --from=builder /app/mock-ptz-camera .
 
 EXPOSE 8554 8080 3702/udp
 

@@ -36,7 +36,7 @@
     position: relative;
     min-width: 0;
   }
-  .video-panel img {
+  .video-panel canvas {
     max-width: 100%;
     max-height: 100%;
     object-fit: contain;
@@ -417,7 +417,7 @@
   </header>
   <div class="main-content">
     <div class="video-panel">
-      <img id="videoFeed" alt="Camera Feed">
+      <canvas id="videoCanvas"></canvas>
       <div class="status-bar">
         <span>Pan: <span id="sPan">0.000</span></span>
         <span>Tilt: <span id="sTilt">0.000</span></span>
@@ -641,16 +641,12 @@
       document.getElementById('wsLabel').textContent = 'Connected';
       send({ type: 'get_status' });
       send({ type: 'get_presets' });
-      // Start MJPEG stream after WS connects to avoid hogging a connection slot
-      document.getElementById('videoFeed').src = '/api/stream?' + Date.now();
     };
 
     ws.onclose = () => {
       clearTimeout(connectTimer);
       document.getElementById('wsDot').classList.remove('connected');
       document.getElementById('wsLabel').textContent = 'Disconnected';
-      // Release the MJPEG connection so the browser can use the slot for WS reconnect
-      document.getElementById('videoFeed').removeAttribute('src');
       scheduleReconnect();
     };
 
@@ -786,8 +782,91 @@
     }
   });
 
+  // ---- H.264 Video via WebCodecs ----
+  let videoWS = null;
+  let videoDecoder = null;
+  let videoCanvas = document.getElementById('videoCanvas');
+  let videoCtx = videoCanvas.getContext('2d');
+
+  function connectVideoWS() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = `${proto}//${location.host}/ws/video`;
+    try {
+      videoWS = new WebSocket(url);
+      videoWS.binaryType = 'arraybuffer';
+    } catch (e) {
+      console.warn('[video-ws] connect failed:', e);
+      setTimeout(connectVideoWS, 2000);
+      return;
+    }
+
+    videoWS.onopen = () => {
+      console.log('[video-ws] connected');
+    };
+
+    videoWS.onclose = () => {
+      console.log('[video-ws] disconnected');
+      if (videoDecoder) {
+        try { videoDecoder.close(); } catch (_) {}
+        videoDecoder = null;
+      }
+      setTimeout(connectVideoWS, 2000);
+    };
+
+    videoWS.onerror = () => { videoWS.close(); };
+
+    videoWS.onmessage = (e) => {
+      if (typeof e.data === 'string') {
+        // JSON init message
+        const init = JSON.parse(e.data);
+        if (init.type === 'init') {
+          initDecoder(init.codec, init.width, init.height);
+        }
+        return;
+      }
+      // Binary: [1-byte key flag][Annex B data]
+      const buf = new Uint8Array(e.data);
+      if (buf.length < 2) return;
+      const isKey = buf[0] === 1;
+      const annexB = buf.slice(1);
+      if (videoDecoder && videoDecoder.state === 'configured') {
+        videoDecoder.decode(new EncodedVideoChunk({
+          type: isKey ? 'key' : 'delta',
+          timestamp: performance.now() * 1000, // microseconds
+          data: annexB
+        }));
+      }
+    };
+  }
+
+  function initDecoder(codec, width, height) {
+    videoCanvas.width = width;
+    videoCanvas.height = height;
+
+    if (videoDecoder) {
+      try { videoDecoder.close(); } catch (_) {}
+    }
+
+    videoDecoder = new VideoDecoder({
+      output: (frame) => {
+        videoCtx.drawImage(frame, 0, 0);
+        frame.close();
+      },
+      error: (err) => {
+        console.error('[video-decoder] error:', err);
+      }
+    });
+
+    videoDecoder.configure({
+      codec: codec,
+      optimizeForLatency: true
+    });
+    console.log('[video-decoder] configured', codec, width, height);
+  }
+
   // Init
   connectWS();
+  connectVideoWS();
 </script>
 </body>
 </html>
