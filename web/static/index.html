@@ -364,12 +364,38 @@
 
   @media (max-width: 768px) {
     .main-content { flex-direction: column; }
+    .video-panel {
+      max-height: 40vh;
+      min-height: 200px;
+    }
     .controls-panel {
       width: 100%;
       min-width: unset;
       border-left: none;
       border-top: 1px solid var(--border);
-      max-height: 50vh;
+      max-height: unset;
+      flex: 1;
+      padding: 12px;
+    }
+    .status-bar {
+      gap: 12px;
+      font-size: 11px;
+      padding: 8px 12px;
+    }
+    .dpad-container {
+      justify-content: center;
+    }
+    .dpad {
+      grid-template-columns: 40px 40px 40px;
+      grid-template-rows: 40px 40px 40px;
+    }
+    .zoom-buttons button {
+      width: 46px;
+      height: 40px;
+      font-size: 12px;
+    }
+    .ws-status {
+      font-size: 12px;
     }
   }
 </style>
@@ -588,19 +614,28 @@
   function connectWS() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const url = `${proto}//${location.host}/ws`;
-    ws = new WebSocket(url);
+    try {
+      ws = new WebSocket(url);
+    } catch (e) {
+      console.warn('[ws] connect failed:', e);
+      scheduleReconnect();
+      return;
+    }
 
     ws.onopen = () => {
       document.getElementById('wsDot').classList.add('connected');
       document.getElementById('wsLabel').textContent = 'Connected';
       send({ type: 'get_status' });
       send({ type: 'get_presets' });
+      // Reload MJPEG stream in case it broke during server restart
+      const feed = document.getElementById('videoFeed');
+      feed.src = '/api/stream?' + Date.now();
     };
 
     ws.onclose = () => {
       document.getElementById('wsDot').classList.remove('connected');
       document.getElementById('wsLabel').textContent = 'Disconnected';
-      setTimeout(connectWS, 2000);
+      scheduleReconnect();
     };
 
     ws.onerror = () => { ws.close(); };
@@ -609,6 +644,10 @@
       const msg = JSON.parse(e.data);
       handleMessage(msg);
     };
+  }
+
+  function scheduleReconnect() {
+    setTimeout(connectWS, 2000);
   }
 
   function send(obj) {

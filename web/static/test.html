@@ -85,12 +85,18 @@
     border-bottom: 1px solid var(--border);
     flex-wrap: wrap;
   }
-  .auth-bar label {
+  .auth-field {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .auth-field label {
     font-size: 12px;
     font-weight: 500;
     color: var(--text-muted);
+    white-space: nowrap;
   }
-  .auth-bar input, .auth-bar select {
+  .auth-field input, .auth-field select {
     padding: 6px 10px;
     background: var(--bg);
     border: 1px solid var(--border);
@@ -99,11 +105,14 @@
     font-size: 13px;
     outline: none;
   }
-  .auth-bar input:focus, .auth-bar select:focus {
+  .auth-field input {
+    width: 100px;
+  }
+  .auth-field input:focus, .auth-field select:focus {
     border-color: var(--ring);
     box-shadow: 0 0 0 3px var(--primary-muted);
   }
-  .auth-bar select { cursor: pointer; }
+  .auth-field select { cursor: pointer; }
 
   .request-response {
     flex: 1;
@@ -520,11 +529,75 @@
       min-width: unset;
       border-right: none;
       border-bottom: 1px solid var(--border);
-      max-height: 200px;
-      flex-direction: row;
+      max-height: 35vh;
+      flex-direction: column;
+      flex-wrap: nowrap;
+      padding: 8px;
+      gap: 4px;
+    }
+    .mode-toggle {
+      margin-bottom: 2px;
+    }
+    .mode-toggle button {
+      padding: 5px 10px;
+      font-size: 12px;
+    }
+    .endpoint-group h4 {
+      padding: 4px 8px 2px;
+      font-size: 10px;
+    }
+    .endpoint-group .path {
+      padding: 0 8px 4px;
+      font-size: 9px;
+    }
+    .endpoint-btn {
+      padding: 6px 8px;
+      font-size: 12px;
+    }
+    .auth-bar {
+      padding: 8px 12px;
+      gap: 8px;
       flex-wrap: wrap;
     }
-    .panes { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+    .auth-field {
+      flex: 1;
+      min-width: 0;
+    }
+    .auth-field label {
+      font-size: 11px;
+    }
+    .auth-field input, .auth-field select {
+      font-size: 12px;
+      flex: 1;
+      min-width: 60px;
+      width: auto;
+    }
+    .param-field input {
+      width: 80px;
+    }
+    .panes {
+      grid-template-columns: 1fr;
+      grid-template-rows: 1fr 1fr;
+    }
+    .runner-toolbar {
+      padding: 8px 12px;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .run-all-btn {
+      padding: 6px 16px;
+      font-size: 12px;
+    }
+    .runner-detail-body {
+      grid-template-columns: 1fr;
+    }
+    .ws-discovery-info {
+      padding: 12px;
+    }
+    .ws-discovery-info pre {
+      font-size: 10px;
+      padding: 10px;
+    }
   }
 </style>
 </head>
@@ -602,16 +675,22 @@
 
     <div class="test-panel">
       <div class="auth-bar" id="authBar">
-        <label>Auth:</label>
-        <select id="authMode">
-          <option value="none">None</option>
-          <option value="text" selected>PasswordText</option>
-          <option value="digest">PasswordDigest</option>
-        </select>
-        <label>User:</label>
-        <input type="text" id="authUser" value="admin" style="width:100px">
-        <label>Pass:</label>
-        <input type="password" id="authPass" value="admin" style="width:100px">
+        <div class="auth-field">
+          <label>Auth:</label>
+          <select id="authMode">
+            <option value="none">None</option>
+            <option value="text" selected>PasswordText</option>
+            <option value="digest">PasswordDigest</option>
+          </select>
+        </div>
+        <div class="auth-field">
+          <label>User:</label>
+          <input type="text" id="authUser" value="admin">
+        </div>
+        <div class="auth-field">
+          <label>Pass:</label>
+          <input type="password" id="authPass" value="admin">
+        </div>
       </div>
 
       <div class="params-bar" id="paramsBar"></div>
@@ -794,6 +873,47 @@ except socket.timeout:
     return btoa(String.fromCharCode(...uint8));
   }
 
+  // Pure JS SHA-1 fallback for non-secure contexts (HTTP over LAN IP)
+  function sha1Sync(data) {
+    const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data);
+    let h0 = 0x67452301, h1 = 0xEFCDAB89, h2 = 0x98BADCFE, h3 = 0x10325476, h4 = 0xC3D2E1F0;
+    const bitLen = bytes.length * 8;
+    const padLen = bytes.length + 1 + ((55 - bytes.length % 64 + 64) % 64) + 8;
+    const padded = new Uint8Array(padLen);
+    padded.set(bytes);
+    padded[bytes.length] = 0x80;
+    const dv = new DataView(padded.buffer);
+    dv.setUint32(padLen - 4, bitLen, false);
+    const w = new Int32Array(80);
+    for (let offset = 0; offset < padLen; offset += 64) {
+      for (let i = 0; i < 16; i++) w[i] = dv.getInt32(offset + i * 4, false);
+      for (let i = 16; i < 80; i++) { const t = w[i-3] ^ w[i-8] ^ w[i-14] ^ w[i-16]; w[i] = (t << 1) | (t >>> 31); }
+      let a = h0, b = h1, c = h2, d = h3, e = h4;
+      for (let i = 0; i < 80; i++) {
+        let f, k;
+        if (i < 20)      { f = (b & c) | (~b & d);             k = 0x5A827999; }
+        else if (i < 40) { f = b ^ c ^ d;                      k = 0x6ED9EBA1; }
+        else if (i < 60) { f = (b & c) | (b & d) | (c & d);    k = 0x8F1BBCDC; }
+        else             { f = b ^ c ^ d;                      k = 0xCA62C1D6; }
+        const temp = (((a << 5) | (a >>> 27)) + f + e + k + w[i]) | 0;
+        e = d; d = c; c = (b << 30) | (b >>> 2); b = a; a = temp;
+      }
+      h0 = (h0 + a) | 0; h1 = (h1 + b) | 0; h2 = (h2 + c) | 0; h3 = (h3 + d) | 0; h4 = (h4 + e) | 0;
+    }
+    const result = new Uint8Array(20);
+    const rv = new DataView(result.buffer);
+    rv.setUint32(0, h0, false); rv.setUint32(4, h1, false); rv.setUint32(8, h2, false);
+    rv.setUint32(12, h3, false); rv.setUint32(16, h4, false);
+    return result;
+  }
+
+  async function sha1(data) {
+    if (crypto.subtle) {
+      return new Uint8Array(await crypto.subtle.digest('SHA-1', data));
+    }
+    return sha1Sync(data);
+  }
+
   async function buildAuthHeader() {
     const mode = document.getElementById('authMode').value;
     if (mode === 'none') return '';
@@ -814,7 +934,7 @@ except socket.timeout:
     const created = new Date().toISOString();
     const encoder = new TextEncoder();
     const concat = new Uint8Array([...nonce, ...encoder.encode(created + pass)]);
-    const hash = new Uint8Array(await crypto.subtle.digest('SHA-1', concat));
+    const hash = await sha1(concat);
     const digest = toBase64(hash);
     const nonceB64 = toBase64(nonce);
 
