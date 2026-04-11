@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	log "github.com/sirupsen/logrus"
+	ffmpeg "github.com/u2takey/ffmpeg-go"
 )
 
 type Encoder struct {
@@ -54,35 +55,33 @@ func (e *Encoder) WaitSPSPPS() {
 	<-e.spsPPSReady
 }
 
-func (e *Encoder) buildArgs() []string {
-	return []string{
-		"-f", "rawvideo",
-		"-pix_fmt", "rgb24",
-		"-s", fmt.Sprintf("%dx%d", e.width, e.height),
-		"-r", fmt.Sprintf("%d", e.fps),
-		"-i", "pipe:0",
-		"-pix_fmt", "yuv420p",
-		"-c:v", "libx264",
-		"-preset", "ultrafast",
-		"-tune", "zerolatency",
-		"-profile:v", "baseline",
-		"-level", "3.1",
-		"-crf", "23",
-		"-g", fmt.Sprintf("%d", e.fps),
-		"-slices", "1",
-		"-threads", "1",
-		"-f", "h264",
-		"-an",
-		"-flush_packets", "1",
-		"-v", "warning",
-		"pipe:1",
-	}
+func (e *Encoder) buildStream() *ffmpeg.Stream {
+	return ffmpeg.Input("pipe:0", ffmpeg.KwArgs{
+		"f":       "rawvideo",
+		"pix_fmt": "rgb24",
+		"s":       fmt.Sprintf("%dx%d", e.width, e.height),
+		"r":       fmt.Sprintf("%d", e.fps),
+	}).Output("pipe:1", ffmpeg.KwArgs{
+		"pix_fmt":       "yuv420p",
+		"c:v":           "libx264",
+		"preset":        "ultrafast",
+		"tune":          "zerolatency",
+		"profile:v":     "baseline",
+		"level":         "3.1",
+		"crf":           "23",
+		"g":             fmt.Sprintf("%d", e.fps),
+		"slices":        "1",
+		"threads":       "1",
+		"f":             "h264",
+		"an":            "",
+		"flush_packets": "1",
+	}).GlobalArgs("-v", "warning").Silent(true)
 }
 
 func (e *Encoder) startProcess() error {
-	args := e.buildArgs()
-	log.WithField("args", args).Debug("starting ffmpeg encoder")
-	cmd := exec.Command("ffmpeg", args...)
+	stream := e.buildStream()
+	cmd := stream.Compile()
+	log.WithField("args", cmd.Args).Debug("starting ffmpeg encoder")
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
