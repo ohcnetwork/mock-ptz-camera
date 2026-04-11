@@ -103,14 +103,15 @@
   }
   .dpad button:hover { background: var(--primary-muted); color: var(--primary); border-color: var(--primary); }
   .dpad button:active { background: var(--primary); color: var(--primary-fg); }
+  .dpad button.active-dir { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
   .dpad .center {
-    background: transparent;
-    border: 1px dashed var(--border);
-    cursor: default;
-    font-size: 10px;
-    color: var(--text-dim);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    cursor: pointer;
+    font-size: 14px;
+    /* color: var(--destructive); */
   }
-  .dpad .center:hover { background: transparent; border-color: var(--border); color: var(--text-dim); }
+  .dpad .center:hover { background: rgba(239,68,68,0.1); border-color: var(--destructive); color: var(--destructive); }
 
   .zoom-buttons {
     display: flex;
@@ -133,6 +134,7 @@
   }
   .zoom-buttons button:hover { background: var(--primary-muted); color: var(--primary); border-color: var(--primary); }
   .zoom-buttons button:active { background: var(--primary); color: var(--primary-fg); }
+  .zoom-buttons button.active-dir { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
 
   /* Speed */
   .speed-row {
@@ -419,7 +421,7 @@
           </div>
           <div class="zoom-buttons">
             <button data-zoom="1" title="Zoom In">Z+</button>
-            <button title="Reset Zoom" onclick="sendAbsoluteValues(parseFloat(document.getElementById('sPan').textContent), parseFloat(document.getElementById('sTilt').textContent), 0)" style="font-size:11px">RST</button>
+            <button title="Reset Zoom" onclick="resetZoom()" style="font-size:11px">RST</button>
             <button data-zoom="-1" title="Zoom Out">Z&minus;</button>
           </div>
         </div>
@@ -539,6 +541,8 @@
       fire();
       holdIntervals.set(btn, setInterval(fire, 150));
     } else {
+      clearActiveDir();
+      btn.classList.add('active-dir');
       activeButtons.add(btn);
       const speed = parseFloat(speedSlider.value);
       sendContinuous(pan * speed, tilt * speed, 0);
@@ -564,6 +568,8 @@
       fire();
       holdIntervals.set(btn, setInterval(fire, 150));
     } else {
+      clearActiveDir();
+      btn.classList.add('active-dir');
       activeButtons.add(btn);
       const speed = parseFloat(speedSlider.value);
       sendContinuous(0, 0, zoom * speed);
@@ -635,6 +641,18 @@
   function sendStop() {
     send({ type: 'stop' });
     activeButtons.clear();
+    clearActiveDir();
+  }
+
+  function resetZoom() {
+    sendStop();
+    const p = parseFloat(document.getElementById('sPan').textContent);
+    const t = parseFloat(document.getElementById('sTilt').textContent);
+    sendAbsoluteValues(p, t, 0);
+  }
+
+  function clearActiveDir() {
+    document.querySelectorAll('.active-dir').forEach(el => el.classList.remove('active-dir'));
   }
 
   function savePreset() {

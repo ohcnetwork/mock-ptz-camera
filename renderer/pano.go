@@ -58,7 +58,7 @@ func (p *PanoRenderer) Render(pos ptz.Position, fps float64) []byte {
 	// Tilt: TiltHorizon (0.8) = horizontal (pitch 0), -1.0 = nadir (pitch -π/2)
 	pitch := (pos.Tilt - ptz.TiltHorizon) * math.Pi / (2.0 * (ptz.TiltHorizon - ptz.TiltMin))
 	// Zoom: 0..1 → horizontal FOV from 90° down to ~4.5°
-	fovH := (math.Pi / 2.0) / (1.0 + pos.Zoom*19.0)
+	fovH := (math.Pi / 2.0) / pos.ZoomX()
 
 	// Precompute rotation sin/cos.
 	sinY, cosY := math.Sincos(yaw)
@@ -102,7 +102,7 @@ func (p *PanoRenderer) Render(pos ptz.Position, fps float64) []byte {
 
 			// Convert to spherical coordinates → equirectangular UV.
 			theta := math.Atan2(dx3, dz3)       // azimuth: -π..+π
-			phi := math.Asin(clamp(dy3, -1, 1)) // elevation: -π/2..+π/2
+			phi := math.Asin(ptz.Clamp(dy3, -1, 1)) // elevation: -π/2..+π/2
 
 			// Map to source image pixel coordinates.
 			u := (theta/(2*math.Pi) + 0.5) * srcWf // 0..srcW
@@ -175,16 +175,6 @@ func bilerp(v00, v10, v01, v11, fx, fy float64) uint8 {
 		return 255
 	}
 	return uint8(v)
-}
-
-func clamp(v, lo, hi float64) float64 {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
 }
 
 // loadImageRGB loads a JPEG or PNG image and returns its pixels as packed RGB24.

@@ -8,20 +8,6 @@ import (
 	"github.com/ohcnetwork/mock-ptz-camera/ptz"
 )
 
-// panDeg converts normalized pan (-1..+1) to degrees (0..360) like real cameras.
-func panDeg(pan float64) float64 {
-	d := pan * 180.0
-	if d < 0 {
-		d += 360.0
-	}
-	return d
-}
-
-// tiltDeg converts normalized tilt to degrees from horizontal (0° = horizon, 90° = nadir).
-func tiltDeg(tilt float64) float64 {
-	return (ptz.TiltHorizon - tilt) * 90.0 / (ptz.TiltHorizon - ptz.TiltMin)
-}
-
 // DrawCrosshair draws a center crosshair and zoom bar on an RGB24 frame.
 func DrawCrosshair(buf []byte, w, h int) {
 	white := color.RGBA{255, 255, 255, 255}
@@ -53,9 +39,9 @@ func DrawOSD(buf []byte, w, h int, pos ptz.Position, fps float64) {
 		now.Format("2006-01-02 15:04:05"),
 		fmt.Sprintf("FPS:%.1f", fps),
 		fmt.Sprintf("P:%.0f° T:%.0f° Z:%.0fx",
-			panDeg(pos.Pan),
-			tiltDeg(pos.Tilt),
-			1.0+pos.Zoom*19.0),
+			pos.PanDeg(),
+			pos.TiltDeg(),
+			pos.ZoomX()),
 	}
 
 	maxChars := 0
