@@ -39,6 +39,12 @@ Two goroutines drive the pipeline:
 docker compose up --build
 ```
 
+On **macOS** (Docker Desktop), set `HOST_IP` to your Mac's LAN IP so ONVIF clients can reach the camera. WS-Discovery (multicast) does not work through Docker Desktop's VM — use direct ONVIF HTTP access instead.
+
+```bash
+HOST_IP=192.168.1.100 docker compose up --build
+```
+
 ### From source
 
 Requires Go 1.26+ and FFmpeg installed.
@@ -64,6 +70,7 @@ All settings are configurable via environment variables:
 | `LOG_LEVEL` | `info` | Log verbosity (`debug`, `info`, `warn`, `error`) |
 | `RENDERER` | `pano` | Renderer type: `pano` or `testpattern` |
 | `PANO_IMAGE` | `assets/default_pano.jpg` | Path to equirectangular panoramic image (used when `RENDERER=pano`) |
+| `HOST_IP` | *(auto-detect)* | IP address advertised in ONVIF/RTSP URLs. Set when running in Docker or when auto-detection picks the wrong interface |
 
 ## Endpoints
 

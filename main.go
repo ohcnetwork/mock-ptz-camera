@@ -39,8 +39,13 @@ func main() {
 		"width": cfg.Width, "height": cfg.Height, "fps": cfg.FPS,
 	}).Info("resolution configured")
 
-	hostIP := detectHostIP()
-	log.WithField("ip", hostIP).Info("detected host IP")
+	hostIP := cfg.HostIP
+	if hostIP == "" {
+		hostIP = detectHostIP()
+		log.WithField("ip", hostIP).Info("detected host IP")
+	} else {
+		log.WithField("ip", hostIP).Info("using HOST_IP override")
+	}
 
 	eventsService := onvif.NewEventsService(
 		fmt.Sprintf("http://%s:%d/onvif/subscription", hostIP, cfg.WebPort),

@@ -17,6 +17,7 @@ type Config struct {
 	LogLevel  string
 	Renderer  string
 	PanoImage string
+	HostIP    string
 }
 
 func Load() *Config {
@@ -31,6 +32,7 @@ func Load() *Config {
 		LogLevel:  envOrDefault("LOG_LEVEL", "info"),
 		Renderer:  envOrDefault("RENDERER", "pano"),
 		PanoImage: envOrDefault("PANO_IMAGE", "assets/default_pano.jpg"),
+		HostIP:    os.Getenv("HOST_IP"),
 	}
 }
 

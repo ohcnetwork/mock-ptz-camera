@@ -10,4 +10,8 @@ services:
       - CAMERA_PASS=admin
       - RTSP_PORT=8554
       - WEB_PORT=8080
+      # Set HOST_IP to the address clients will use to reach this camera.
+      # Use 127.0.0.1 for same-machine testing, or your LAN IP for
+      # external ONVIF clients (e.g. HOST_IP=192.168.1.100).
+      - HOST_IP=${HOST_IP:-127.0.0.1}
     restart: unless-stopped
