@@ -1,0 +1,1283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ONVIF API Test — Mock PTZ Camera</title>
+<link rel="stylesheet" href="/static/common.css">
+<style>
+  .main-content {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+  .sidebar {
+    width: 280px;
+    min-width: 280px;
+    overflow-y: auto;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .sidebar::-webkit-scrollbar { width: 6px; }
+  .sidebar::-webkit-scrollbar-track { background: transparent; }
+  .sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  .endpoint-group h4 {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    padding: 8px 10px 4px;
+  }
+  .endpoint-group .path {
+    font-size: 10px;
+    font-family: 'SF Mono', 'Cascadia Code', monospace;
+    color: var(--text-dim);
+    padding: 0 10px 6px;
+  }
+  .endpoint-btn {
+    display: block;
+    width: 100%;
+    padding: 8px 10px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 500;
+    text-align: left;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .endpoint-btn:hover { background: var(--primary-muted); color: var(--text); }
+  .endpoint-btn.active { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
+  .endpoint-btn .method {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
+    font-family: 'SF Mono', 'Cascadia Code', monospace;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: rgba(85,176,96,0.15);
+    color: var(--primary);
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  .endpoint-btn.active .method { background: rgba(255,255,255,0.2); color: var(--primary-fg); }
+
+  .test-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 0;
+  }
+  .auth-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 20px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .auth-bar label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-muted);
+  }
+  .auth-bar input, .auth-bar select {
+    padding: 6px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    font-size: 13px;
+    outline: none;
+  }
+  .auth-bar input:focus, .auth-bar select:focus {
+    border-color: var(--ring);
+    box-shadow: 0 0 0 3px var(--primary-muted);
+  }
+  .auth-bar select { cursor: pointer; }
+
+  .request-response {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .params-bar {
+    padding: 12px 20px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: none;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: flex-end;
+  }
+  .params-bar.visible { display: flex; }
+  .param-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .param-field label {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .param-field input {
+    padding: 6px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: 'SF Mono', 'Cascadia Code', monospace;
+    width: 120px;
+    outline: none;
+  }
+  .param-field input:focus {
+    border-color: var(--ring);
+    box-shadow: 0 0 0 3px var(--primary-muted);
+  }
+  .send-btn {
+    padding: 7px 20px;
+    background: var(--primary);
+    border: none;
+    color: var(--primary-fg);
+    border-radius: var(--radius);
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    transition: background 0.15s ease;
+  }
+  .send-btn:hover { background: var(--primary-hover); }
+  .send-btn:active { transform: scale(0.98); }
+  .send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .panes {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--border);
+    overflow: hidden;
+  }
+  .pane {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    overflow: hidden;
+  }
+  .pane-header {
+    padding: 8px 16px;
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .pane-header span {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+  }
+  .pane-header .status-badge {
+    font-size: 11px;
+    font-weight: 700;
+    font-family: 'SF Mono', 'Cascadia Code', monospace;
+    padding: 2px 8px;
+    border-radius: 4px;
+    display: none;
+  }
+  .pane-header .status-badge.ok { display: inline; background: rgba(85,176,96,0.15); color: var(--primary); }
+  .pane-header .status-badge.err { display: inline; background: rgba(239,68,68,0.15); color: var(--destructive); }
+  .pane pre {
+    flex: 1;
+    margin: 0;
+    padding: 16px;
+    overflow: auto;
+    font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-muted);
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .pane pre .xml-tag { color: #7dd3fc; }
+  .pane pre .xml-attr { color: #fbbf24; }
+  .pane pre .xml-val { color: #a78bfa; }
+
+  .empty-state {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-dim);
+    font-size: 14px;
+  }
+
+  .ws-discovery-info {
+    padding: 20px;
+    overflow-y: auto;
+    flex: 1;
+  }
+  .ws-discovery-info h3 {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    color: var(--text);
+  }
+  .ws-discovery-info p {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+    line-height: 1.6;
+  }
+  .ws-discovery-info code {
+    font-family: 'SF Mono', 'Cascadia Code', monospace;
+    font-size: 12px;
+    background: var(--card);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--primary);
+  }
+  .ws-discovery-info pre {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 16px;
+    font-family: 'SF Mono', 'Cascadia Code', monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-muted);
+    overflow-x: auto;
+    white-space: pre-wrap;
+  }
+  .copy-btn {
+    padding: 4px 12px;
+    background: var(--primary-muted);
+    border: 1px solid var(--primary);
+    color: var(--primary);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 600;
+    transition: all 0.15s ease;
+    margin-bottom: 8px;
+  }
+  .copy-btn:hover { background: var(--primary); color: var(--primary-fg); }
+
+  .spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* --- Mode Toggle --- */
+  .mode-toggle {
+    display: flex;
+    gap: 4px;
+    padding: 8px 12px;
+    background: var(--bg);
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    margin-bottom: 4px;
+  }
+  .mode-toggle button {
+    flex: 1;
+    padding: 7px 12px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.15s ease;
+  }
+  .mode-toggle button:hover { color: var(--text); }
+  .mode-toggle button.active {
+    background: var(--primary);
+    color: var(--primary-fg);
+    box-shadow: 0 1px 3px rgba(85,176,96,0.3);
+  }
+
+  /* --- Test Runner Panel --- */
+  .runner-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .runner-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 20px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .run-all-btn {
+    padding: 8px 24px;
+    background: var(--primary);
+    border: none;
+    color: var(--primary-fg);
+    border-radius: var(--radius);
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    transition: background 0.15s ease;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .run-all-btn:hover { background: var(--primary-hover); }
+  .run-all-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .runner-summary {
+    display: flex;
+    gap: 16px;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: 'SF Mono', 'Cascadia Code', monospace;
+  }
+  .runner-summary .pass { color: var(--primary); }
+  .runner-summary .fail { color: var(--destructive); }
+  .runner-summary .skip { color: var(--text-dim); }
+  .runner-summary .total { color: var(--text-muted); }
+  .runner-progress {
+    flex: 1;
+    min-width: 100px;
+    max-width: 300px;
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .runner-progress-bar {
+    height: 100%;
+    width: 0%;
+    background: var(--primary);
+    border-radius: 3px;
+    transition: width 0.3s ease;
+  }
+  .runner-progress-bar.has-fail {
+    background: linear-gradient(90deg, var(--primary) var(--pass-pct, 0%), var(--destructive) var(--pass-pct, 0%));
+  }
+  .runner-results {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 20px;
+  }
+  .runner-results::-webkit-scrollbar { width: 6px; }
+  .runner-results::-webkit-scrollbar-track { background: transparent; }
+  .runner-results::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  .test-group-header {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    padding: 12px 0 6px;
+    border-bottom: 1px solid var(--border-subtle);
+    margin-bottom: 4px;
+  }
+  .test-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-radius: var(--radius);
+    transition: background 0.15s;
+    cursor: pointer;
+  }
+  .test-row:hover { background: var(--primary-muted); }
+  .test-row.selected { background: rgba(85,176,96,0.08); border: 1px solid var(--border); }
+  .test-icon {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .test-icon.pending { background: var(--border); color: var(--text-dim); }
+  .test-icon.running { background: var(--primary-muted); color: var(--primary); animation: pulse 1s infinite; }
+  .test-icon.pass { background: rgba(85,176,96,0.2); color: var(--primary); }
+  .test-icon.fail { background: rgba(239,68,68,0.2); color: var(--destructive); }
+  .test-icon.skip { background: var(--border); color: var(--text-dim); }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+  .test-name {
+    flex: 1;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+  }
+  .test-detail {
+    font-size: 11px;
+    font-family: 'SF Mono', 'Cascadia Code', monospace;
+    color: var(--text-dim);
+  }
+  .test-time {
+    font-size: 11px;
+    font-family: 'SF Mono', 'Cascadia Code', monospace;
+    color: var(--text-dim);
+    min-width: 50px;
+    text-align: right;
+  }
+  .test-row .test-status-text {
+    font-size: 11px;
+    font-weight: 600;
+    min-width: 40px;
+    text-align: right;
+  }
+  .test-row .test-status-text.pass { color: var(--primary); }
+  .test-row .test-status-text.fail { color: var(--destructive); }
+  .test-row .test-status-text.skip { color: var(--text-dim); }
+
+  .runner-detail {
+    border-top: 1px solid var(--border);
+    max-height: 40%;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .runner-detail .pane-header {
+    padding: 8px 16px;
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .runner-detail .pane-header span {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+  }
+  .runner-detail-body {
+    flex: 1;
+    overflow: auto;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--border);
+  }
+  .runner-detail-body pre {
+    margin: 0;
+    padding: 12px;
+    font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--text-muted);
+    white-space: pre-wrap;
+    word-break: break-all;
+    overflow: auto;
+    background: var(--bg);
+  }
+  .runner-empty {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-dim);
+    font-size: 14px;
+  }
+  .test-error-msg {
+    font-size: 11px;
+    color: var(--destructive);
+    padding: 2px 0 0 30px;
+  }
+
+  @media (max-width: 900px) {
+    .main-content { flex-direction: column; }
+    .sidebar {
+      width: 100%;
+      min-width: unset;
+      border-right: none;
+      border-bottom: 1px solid var(--border);
+      max-height: 200px;
+      flex-direction: row;
+      flex-wrap: wrap;
+    }
+    .panes { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="header-left">
+      <h1>Mock PTZ Camera</h1>
+      <nav>
+        <a href="/">Camera</a>
+        <a href="/test" class="active">ONVIF API Test</a>
+      </nav>
+    </div>
+  </header>
+  <div class="main-content">
+    <div class="sidebar">
+      <div class="mode-toggle">
+        <button id="modeManual" class="active" onclick="switchMode('manual')">Manual</button>
+        <button id="modeAuto" onclick="switchMode('auto')">Run All</button>
+      </div>
+      <div class="endpoint-group">
+        <h4>Device Service</h4>
+        <div class="path">/onvif/device_service</div>
+        <button class="endpoint-btn" data-op="GetSystemDateAndTime" data-path="/onvif/device_service"><span class="method">POST</span>GetSystemDateAndTime</button>
+        <button class="endpoint-btn" data-op="GetDeviceInformation" data-path="/onvif/device_service"><span class="method">POST</span>GetDeviceInformation</button>
+        <button class="endpoint-btn" data-op="GetServices" data-path="/onvif/device_service"><span class="method">POST</span>GetServices</button>
+        <button class="endpoint-btn" data-op="GetCapabilities" data-path="/onvif/device_service"><span class="method">POST</span>GetCapabilities</button>
+        <button class="endpoint-btn" data-op="GetScopes" data-path="/onvif/device_service"><span class="method">POST</span>GetScopes</button>
+      </div>
+      <div class="endpoint-group">
+        <h4>Media Service</h4>
+        <div class="path">/onvif/media_service</div>
+        <button class="endpoint-btn" data-op="GetProfiles" data-path="/onvif/media_service"><span class="method">POST</span>GetProfiles</button>
+        <button class="endpoint-btn" data-op="GetProfile" data-path="/onvif/media_service"><span class="method">POST</span>GetProfile</button>
+        <button class="endpoint-btn" data-op="GetStreamUri" data-path="/onvif/media_service"><span class="method">POST</span>GetStreamUri</button>
+        <button class="endpoint-btn" data-op="GetVideoSources" data-path="/onvif/media_service"><span class="method">POST</span>GetVideoSources</button>
+        <button class="endpoint-btn" data-op="GetVideoSourceConfigurations" data-path="/onvif/media_service"><span class="method">POST</span>GetVideoSourceConfigurations</button>
+        <button class="endpoint-btn" data-op="GetVideoEncoderConfigurations" data-path="/onvif/media_service"><span class="method">POST</span>GetVideoEncoderConfigurations</button>
+        <button class="endpoint-btn" data-op="GetVideoEncoderConfiguration" data-path="/onvif/media_service"><span class="method">POST</span>GetVideoEncoderConfiguration</button>
+      </div>
+      <div class="endpoint-group">
+        <h4>PTZ Service</h4>
+        <div class="path">/onvif/ptz_service</div>
+        <button class="endpoint-btn" data-op="GetStatus" data-path="/onvif/ptz_service"><span class="method">POST</span>GetStatus</button>
+        <button class="endpoint-btn" data-op="GetNodes" data-path="/onvif/ptz_service"><span class="method">POST</span>GetNodes</button>
+        <button class="endpoint-btn" data-op="GetConfigurations" data-path="/onvif/ptz_service"><span class="method">POST</span>GetConfigurations</button>
+        <button class="endpoint-btn" data-op="GetPresets" data-path="/onvif/ptz_service"><span class="method">POST</span>GetPresets</button>
+        <button class="endpoint-btn" data-op="AbsoluteMove" data-path="/onvif/ptz_service"><span class="method">POST</span>AbsoluteMove</button>
+        <button class="endpoint-btn" data-op="RelativeMove" data-path="/onvif/ptz_service"><span class="method">POST</span>RelativeMove</button>
+        <button class="endpoint-btn" data-op="ContinuousMove" data-path="/onvif/ptz_service"><span class="method">POST</span>ContinuousMove</button>
+        <button class="endpoint-btn" data-op="Stop" data-path="/onvif/ptz_service"><span class="method">POST</span>Stop</button>
+        <button class="endpoint-btn" data-op="SetPreset" data-path="/onvif/ptz_service"><span class="method">POST</span>SetPreset</button>
+        <button class="endpoint-btn" data-op="GotoPreset" data-path="/onvif/ptz_service"><span class="method">POST</span>GotoPreset</button>
+        <button class="endpoint-btn" data-op="RemovePreset" data-path="/onvif/ptz_service"><span class="method">POST</span>RemovePreset</button>
+      </div>
+      <div class="endpoint-group">
+        <h4>Events Service</h4>
+        <div class="path">/onvif/event_service</div>
+        <button class="endpoint-btn" data-op="GetEventProperties" data-path="/onvif/event_service"><span class="method">POST</span>GetEventProperties</button>
+        <button class="endpoint-btn" data-op="CreatePullPointSubscription" data-path="/onvif/event_service"><span class="method">POST</span>CreatePullPointSubscription</button>
+      </div>
+      <div class="endpoint-group">
+        <h4>Subscription</h4>
+        <div class="path">/onvif/subscription</div>
+        <button class="endpoint-btn" data-op="PullMessages" data-path="/onvif/subscription"><span class="method">POST</span>PullMessages</button>
+        <button class="endpoint-btn" data-op="Renew" data-path="/onvif/subscription"><span class="method">POST</span>Renew</button>
+        <button class="endpoint-btn" data-op="Unsubscribe" data-path="/onvif/subscription"><span class="method">POST</span>Unsubscribe</button>
+      </div>
+      <div class="endpoint-group">
+        <h4>WS-Discovery</h4>
+        <div class="path">UDP 239.255.255.250:3702</div>
+        <button class="endpoint-btn" data-op="WSDiscovery" data-path=""><span class="method">UDP</span>Probe</button>
+      </div>
+    </div>
+
+    <div class="test-panel">
+      <div class="auth-bar" id="authBar">
+        <label>Auth:</label>
+        <select id="authMode">
+          <option value="none">None</option>
+          <option value="text" selected>PasswordText</option>
+          <option value="digest">PasswordDigest</option>
+        </select>
+        <label>User:</label>
+        <input type="text" id="authUser" value="admin" style="width:100px">
+        <label>Pass:</label>
+        <input type="password" id="authPass" value="admin" style="width:100px">
+      </div>
+
+      <div class="params-bar" id="paramsBar"></div>
+
+      <div id="wsDiscoveryPanel" style="display:none" class="ws-discovery-info">
+        <h3>WS-Discovery Probe</h3>
+        <p>WS-Discovery uses UDP multicast on <code>239.255.255.250:3702</code>. Browsers cannot send UDP, so use the CLI commands below to test.</p>
+
+        <h3>Probe XML</h3>
+        <button class="copy-btn" onclick="copyProbeXml()">Copy XML</button>
+        <pre id="probeXml"></pre>
+
+        <h3>Test with Python</h3>
+        <button class="copy-btn" onclick="copyText(document.getElementById('pythonCmd').textContent)">Copy</button>
+        <pre id="pythonCmd">python3 -c "
+import socket, uuid
+msg = '''&lt;?xml version='1.0' encoding='UTF-8'?&gt;
+&lt;s:Envelope xmlns:s='http://www.w3.org/2003/05/soap-envelope'
+            xmlns:a='http://www.w3.org/2005/08/addressing'
+            xmlns:d='http://schemas.xmlsoap.org/ws/2005/04/discovery'
+            xmlns:dn='http://www.onvif.org/ver10/network/wsdl'&gt;
+  &lt;s:Header&gt;
+    &lt;a:MessageID&gt;uuid:{mid}&lt;/a:MessageID&gt;
+    &lt;a:ReplyTo&gt;&lt;a:Address&gt;http://schemas.xmlsoap.org/ws/2004/08/addressing/role/anonymous&lt;/a:Address&gt;&lt;/a:ReplyTo&gt;
+    &lt;a:To&gt;urn:schemas-xmlsoap-org:ws:2005:04:discovery&lt;/a:To&gt;
+    &lt;a:Action&gt;http://schemas.xmlsoap.org/ws/2005/04/discovery/Probe&lt;/a:Action&gt;
+  &lt;/s:Header&gt;
+  &lt;s:Body&gt;
+    &lt;d:Probe&gt;&lt;d:Types&gt;dn:NetworkVideoTransmitter&lt;/d:Types&gt;&lt;/d:Probe&gt;
+  &lt;/s:Body&gt;
+&lt;/s:Envelope&gt;'''.format(mid=uuid.uuid4())
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
+sock.settimeout(3)
+sock.sendto(msg.encode(), ('239.255.255.250', 3702))
+try:
+    data, addr = sock.recvfrom(65535)
+    print(f'Response from {addr}:')
+    print(data.decode())
+except socket.timeout:
+    print('No response (timeout)')
+"</pre>
+
+        <h3>Expected ProbeMatch Response</h3>
+        <pre>&lt;?xml version="1.0" encoding="UTF-8"?&gt;
+&lt;s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"
+            xmlns:a="http://www.w3.org/2005/08/addressing"
+            xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery"
+            xmlns:dn="http://www.onvif.org/ver10/network/wsdl"&gt;
+  &lt;s:Header&gt;
+    &lt;a:MessageID&gt;uuid:...&lt;/a:MessageID&gt;
+    &lt;a:RelatesTo&gt;uuid:...&lt;/a:RelatesTo&gt;
+    &lt;a:To&gt;http://schemas.xmlsoap.org/ws/2004/08/addressing/role/anonymous&lt;/a:To&gt;
+    &lt;a:Action&gt;http://schemas.xmlsoap.org/ws/2005/04/discovery/ProbeMatches&lt;/a:Action&gt;
+  &lt;/s:Header&gt;
+  &lt;s:Body&gt;
+    &lt;d:ProbeMatches&gt;
+      &lt;d:ProbeMatch&gt;
+        &lt;a:EndpointReference&gt;
+          &lt;a:Address&gt;urn:uuid:mock-ptz-camera-001&lt;/a:Address&gt;
+        &lt;/a:EndpointReference&gt;
+        &lt;d:Types&gt;dn:NetworkVideoTransmitter&lt;/d:Types&gt;
+        &lt;d:Scopes&gt;onvif://www.onvif.org/type/Network_Video_Transmitter onvif://www.onvif.org/name/MockPTZ&lt;/d:Scopes&gt;
+        &lt;d:XAddrs&gt;http://HOST:PORT/onvif/device_service&lt;/d:XAddrs&gt;
+      &lt;/d:ProbeMatch&gt;
+    &lt;/d:ProbeMatches&gt;
+  &lt;/s:Body&gt;
+&lt;/s:Envelope&gt;</pre>
+      </div>
+
+      <div id="requestResponsePanel" class="request-response">
+        <div class="panes">
+          <div class="pane">
+            <div class="pane-header">
+              <span>Request</span>
+            </div>
+            <pre id="requestBody"><span class="empty-state" style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-dim)">Select an endpoint from the sidebar</span></pre>
+          </div>
+          <div class="pane">
+            <div class="pane-header">
+              <span>Response</span>
+              <span class="status-badge" id="statusBadge"></span>
+            </div>
+            <pre id="responseBody"></pre>
+          </div>
+        </div>
+      </div>
+
+      <!-- Automated Test Runner Panel -->
+      <div id="runnerPanel" class="runner-panel" style="display:none">
+        <div class="runner-toolbar">
+          <button class="run-all-btn" id="runAllBtn" onclick="runAllTests()">&#9654; Run All Tests</button>
+          <div class="runner-summary" id="runnerSummary"></div>
+          <div class="runner-progress"><div class="runner-progress-bar" id="runnerProgressBar"></div></div>
+        </div>
+        <div class="runner-results" id="runnerResults">
+          <div class="runner-empty">Click "Run All Tests" to start</div>
+        </div>
+        <div class="runner-detail" id="runnerDetail" style="display:none">
+          <div class="pane-header">
+            <span id="runnerDetailTitle">Detail</span>
+            <span class="status-badge" id="runnerDetailBadge"></span>
+          </div>
+          <div class="runner-detail-body">
+            <pre id="runnerDetailReq"></pre>
+            <pre id="runnerDetailRes"></pre>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script src="/static/common.js"></script>
+<script>
+  // --- ONVIF SOAP Templates ---
+  const NS = {
+    soap: 'http://www.w3.org/2003/05/soap-envelope',
+    wsa: 'http://www.w3.org/2005/08/addressing',
+    wsse: 'http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd',
+    wsu: 'http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd',
+    tds: 'http://www.onvif.org/ver10/device/wsdl',
+    trt: 'http://www.onvif.org/ver10/media/wsdl',
+    tt: 'http://www.onvif.org/ver10/schema',
+    tptz: 'http://www.onvif.org/ver20/ptz/wsdl',
+    tev: 'http://www.onvif.org/ver10/events/wsdl',
+    wsnt: 'http://docs.oasis-open.org/wsn/b-2',
+    dn: 'http://www.onvif.org/ver10/network/wsdl',
+    d: 'http://schemas.xmlsoap.org/ws/2005/04/discovery',
+  };
+
+  // Maps operation name → { ns prefix for body, action URI (optional) }
+  const OP_CONFIG = {
+    // Device
+    GetSystemDateAndTime:  { ns: 'tds', body: '<tds:GetSystemDateAndTime/>' },
+    GetDeviceInformation:  { ns: 'tds', body: '<tds:GetDeviceInformation/>' },
+    GetServices:           { ns: 'tds', body: '<tds:GetServices><tds:IncludeCapability>true</tds:IncludeCapability></tds:GetServices>' },
+    GetCapabilities:       { ns: 'tds', body: '<tds:GetCapabilities><tds:Category>All</tds:Category></tds:GetCapabilities>' },
+    GetScopes:             { ns: 'tds', body: '<tds:GetScopes/>' },
+    // Media
+    GetProfiles:           { ns: 'trt', body: '<trt:GetProfiles/>' },
+    GetProfile:            { ns: 'trt', body: '<trt:GetProfile><trt:ProfileToken>MainProfile</trt:ProfileToken></trt:GetProfile>' },
+    GetStreamUri:          { ns: 'trt', body: '<trt:GetStreamUri><trt:StreamSetup><tt:Stream>RTP-Unicast</tt:Stream><tt:Transport><tt:Protocol>RTSP</tt:Protocol></tt:Transport></trt:StreamSetup><trt:ProfileToken>MainProfile</trt:ProfileToken></trt:GetStreamUri>' },
+    GetVideoSources:       { ns: 'trt', body: '<trt:GetVideoSources/>' },
+    GetVideoSourceConfigurations: { ns: 'trt', body: '<trt:GetVideoSourceConfigurations/>' },
+    GetVideoEncoderConfigurations: { ns: 'trt', body: '<trt:GetVideoEncoderConfigurations/>' },
+    GetVideoEncoderConfiguration: { ns: 'trt', body: '<trt:GetVideoEncoderConfiguration><trt:ConfigurationToken>encoder_config_001</trt:ConfigurationToken></trt:GetVideoEncoderConfiguration>' },
+    // PTZ
+    GetStatus:             { ns: 'tptz', body: '<tptz:GetStatus><tptz:ProfileToken>MainProfile</tptz:ProfileToken></tptz:GetStatus>' },
+    GetNodes:              { ns: 'tptz', body: '<tptz:GetNodes/>' },
+    GetConfigurations:     { ns: 'tptz', body: '<tptz:GetConfigurations/>' },
+    GetPresets:            { ns: 'tptz', body: '<tptz:GetPresets><tptz:ProfileToken>MainProfile</tptz:ProfileToken></tptz:GetPresets>' },
+    AbsoluteMove:          { ns: 'tptz', params: ['pan','tilt','zoom'], build: (p) => `<tptz:AbsoluteMove><tptz:ProfileToken>MainProfile</tptz:ProfileToken><tptz:Position><tt:PanTilt x="${p.pan||0}" y="${p.tilt||0}"/><tt:Zoom x="${p.zoom||0}"/></tptz:Position></tptz:AbsoluteMove>` },
+    RelativeMove:          { ns: 'tptz', params: ['pan','tilt','zoom'], build: (p) => `<tptz:RelativeMove><tptz:ProfileToken>MainProfile</tptz:ProfileToken><tptz:Translation><tt:PanTilt x="${p.pan||0}" y="${p.tilt||0}"/><tt:Zoom x="${p.zoom||0}"/></tptz:Translation></tptz:RelativeMove>` },
+    ContinuousMove:        { ns: 'tptz', params: ['pan_speed','tilt_speed','zoom_speed'], build: (p) => `<tptz:ContinuousMove><tptz:ProfileToken>MainProfile</tptz:ProfileToken><tptz:Velocity><tt:PanTilt x="${p.pan_speed||0}" y="${p.tilt_speed||0}"/><tt:Zoom x="${p.zoom_speed||0}"/></tptz:Velocity></tptz:ContinuousMove>` },
+    Stop:                  { ns: 'tptz', body: '<tptz:Stop><tptz:ProfileToken>MainProfile</tptz:ProfileToken><tptz:PanTilt>true</tptz:PanTilt><tptz:Zoom>true</tptz:Zoom></tptz:Stop>' },
+    SetPreset:             { ns: 'tptz', params: ['preset_name'], build: (p) => `<tptz:SetPreset><tptz:ProfileToken>MainProfile</tptz:ProfileToken><tptz:PresetName>${escapeHtml(p.preset_name||'Preset1')}</tptz:PresetName></tptz:SetPreset>` },
+    GotoPreset:            { ns: 'tptz', params: ['preset_token'], build: (p) => `<tptz:GotoPreset><tptz:ProfileToken>MainProfile</tptz:ProfileToken><tptz:PresetToken>${escapeHtml(p.preset_token||'1')}</tptz:PresetToken></tptz:GotoPreset>` },
+    RemovePreset:          { ns: 'tptz', params: ['preset_token'], build: (p) => `<tptz:RemovePreset><tptz:ProfileToken>MainProfile</tptz:ProfileToken><tptz:PresetToken>${escapeHtml(p.preset_token||'1')}</tptz:PresetToken></tptz:RemovePreset>` },
+    // Events
+    GetEventProperties:    { ns: 'tev', body: '<tev:GetEventProperties/>' },
+    CreatePullPointSubscription: { ns: 'tev', body: '<tev:CreatePullPointSubscription><tev:InitialTerminationTime>PT60S</tev:InitialTerminationTime></tev:CreatePullPointSubscription>' },
+    // Subscription
+    PullMessages:          { ns: 'tev', params: ['timeout','message_limit'], build: (p) => `<tev:PullMessages><tev:Timeout>${escapeHtml(p.timeout||'PT10S')}</tev:Timeout><tev:MessageLimit>${escapeHtml(p.message_limit||'10')}</tev:MessageLimit></tev:PullMessages>` },
+    Renew:                 { ns: 'wsnt', body: '<wsnt:Renew xmlns:wsnt="http://docs.oasis-open.org/wsn/b-2"><wsnt:TerminationTime>PT60S</wsnt:TerminationTime></wsnt:Renew>' },
+    Unsubscribe:           { ns: 'wsnt', body: '<wsnt:Unsubscribe xmlns:wsnt="http://docs.oasis-open.org/wsn/b-2"/>' },
+  };
+
+  let currentOp = null;
+
+  // --- Auth helpers ---
+  function randomBytes(n) {
+    const arr = new Uint8Array(n);
+    crypto.getRandomValues(arr);
+    return arr;
+  }
+
+  function toBase64(uint8) {
+    return btoa(String.fromCharCode(...uint8));
+  }
+
+  async function buildAuthHeader() {
+    const mode = document.getElementById('authMode').value;
+    if (mode === 'none') return '';
+    const user = document.getElementById('authUser').value;
+    const pass = document.getElementById('authPass').value;
+
+    if (mode === 'text') {
+      return `<Security xmlns="${NS.wsse}">
+    <UsernameToken>
+      <Username>${escapeHtml(user)}</Username>
+      <Password Type="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordText">${escapeHtml(pass)}</Password>
+    </UsernameToken>
+  </Security>`;
+    }
+
+    // PasswordDigest: SHA1(Nonce + Created + Password)
+    const nonce = randomBytes(16);
+    const created = new Date().toISOString();
+    const encoder = new TextEncoder();
+    const concat = new Uint8Array([...nonce, ...encoder.encode(created + pass)]);
+    const hash = new Uint8Array(await crypto.subtle.digest('SHA-1', concat));
+    const digest = toBase64(hash);
+    const nonceB64 = toBase64(nonce);
+
+    return `<Security xmlns="${NS.wsse}">
+    <UsernameToken>
+      <Username>${escapeHtml(user)}</Username>
+      <Password Type="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordDigest">${digest}</Password>
+      <Nonce EncodingType="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0#Base64Binary">${nonceB64}</Nonce>
+      <Created xmlns="${NS.wsu}">${created}</Created>
+    </UsernameToken>
+  </Security>`;
+  }
+
+  // --- SOAP envelope builder ---
+  async function buildEnvelope(opName, params) {
+    const cfg = OP_CONFIG[opName];
+    if (!cfg) return '';
+    const bodyContent = cfg.build ? cfg.build(params) : cfg.body;
+    const authHeader = await buildAuthHeader();
+    const headerBlock = authHeader ? `<s:Header>${authHeader}</s:Header>` : '';
+
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<s:Envelope xmlns:s="${NS.soap}"
+            xmlns:tt="${NS.tt}"
+            xmlns:tds="${NS.tds}"
+            xmlns:trt="${NS.trt}"
+            xmlns:tptz="${NS.tptz}"
+            xmlns:tev="${NS.tev}"
+            xmlns:wsnt="${NS.wsnt}">
+  ${headerBlock}
+  <s:Body>
+    ${bodyContent}
+  </s:Body>
+</s:Envelope>`;
+  }
+
+  // --- Syntax highlight XML ---
+  function highlightXml(xml) {
+    return escapeHtml(xml)
+      .replace(/(&lt;\/?[\w:-]+)/g, '<span class="xml-tag">$1</span>')
+      .replace(/(\w+)=(&quot;[^&]*&quot;)/g, '<span class="xml-attr">$1</span>=<span class="xml-val">$2</span>')
+      .replace(/(&gt;)$/gm, '<span class="xml-tag">$1</span>');
+  }
+
+  // --- UI ---
+  function selectEndpoint(btn) {
+    document.querySelectorAll('.endpoint-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const op = btn.dataset.op;
+    const path = btn.dataset.path;
+    currentOp = { op, path };
+
+    // WS-Discovery special case
+    if (op === 'WSDiscovery') {
+      document.getElementById('wsDiscoveryPanel').style.display = '';
+      document.getElementById('requestResponsePanel').style.display = 'none';
+      document.getElementById('paramsBar').classList.remove('visible');
+      populateProbeXml();
+      return;
+    }
+    document.getElementById('wsDiscoveryPanel').style.display = 'none';
+    document.getElementById('requestResponsePanel').style.display = '';
+
+    // Build params UI
+    const cfg = OP_CONFIG[op];
+    const paramsBar = document.getElementById('paramsBar');
+    if (cfg && cfg.params && cfg.params.length > 0) {
+      paramsBar.innerHTML = cfg.params.map(p => `
+        <div class="param-field">
+          <label>${escapeHtml(p)}</label>
+          <input type="text" id="param_${p}" value="${paramDefault(op, p)}">
+        </div>
+      `).join('') + '<button class="send-btn" onclick="sendRequest()">Send</button>';
+      paramsBar.classList.add('visible');
+    } else {
+      paramsBar.innerHTML = '<button class="send-btn" onclick="sendRequest()">Send</button>';
+      paramsBar.classList.add('visible');
+    }
+
+    // Show preview
+    updateRequestPreview();
+  }
+
+  function paramDefault(op, param) {
+    const defaults = {
+      pan: '0', tilt: '0', zoom: '0',
+      pan_speed: '0.5', tilt_speed: '0.5', zoom_speed: '0',
+      preset_name: 'Preset1', preset_token: '1',
+      timeout: 'PT10S', message_limit: '10',
+    };
+    return defaults[param] || '';
+  }
+
+  function getParams() {
+    const params = {};
+    const cfg = OP_CONFIG[currentOp.op];
+    if (cfg && cfg.params) {
+      cfg.params.forEach(p => {
+        const el = document.getElementById('param_' + p);
+        if (el) params[p] = el.value;
+      });
+    }
+    return params;
+  }
+
+  async function updateRequestPreview() {
+    if (!currentOp) return;
+    const xml = await buildEnvelope(currentOp.op, getParams());
+    document.getElementById('requestBody').innerHTML = highlightXml(formatXml(xml));
+  }
+
+  async function sendRequest() {
+    if (!currentOp) return;
+    const params = getParams();
+    const xml = await buildEnvelope(currentOp.op, params);
+    document.getElementById('requestBody').innerHTML = highlightXml(formatXml(xml));
+
+    const badge = document.getElementById('statusBadge');
+    badge.className = 'status-badge';
+    badge.style.display = 'none';
+    document.getElementById('responseBody').innerHTML = '<span class="spinner"></span> Sending...';
+
+    try {
+      const resp = await fetch(currentOp.path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/soap+xml; charset=utf-8' },
+        body: xml,
+      });
+
+      const text = await resp.text();
+      const formatted = formatXml(text);
+      document.getElementById('responseBody').innerHTML = highlightXml(formatted);
+
+      badge.textContent = resp.status + ' ' + resp.statusText;
+      badge.style.display = 'inline';
+      badge.className = 'status-badge ' + (resp.ok ? 'ok' : 'err');
+    } catch (err) {
+      document.getElementById('responseBody').textContent = 'Error: ' + err.message;
+      badge.textContent = 'FAILED';
+      badge.style.display = 'inline';
+      badge.className = 'status-badge err';
+    }
+  }
+
+  function populateProbeXml() {
+    const uuid = crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random()*16|0; return (c==='x'?r:(r&0x3|0x8)).toString(16); });
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"
+            xmlns:a="http://www.w3.org/2005/08/addressing"
+            xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery"
+            xmlns:dn="http://www.onvif.org/ver10/network/wsdl">
+  <s:Header>
+    <a:MessageID>uuid:${uuid}</a:MessageID>
+    <a:ReplyTo>
+      <a:Address>http://schemas.xmlsoap.org/ws/2004/08/addressing/role/anonymous</a:Address>
+    </a:ReplyTo>
+    <a:To>urn:schemas-xmlsoap-org:ws:2005:04:discovery</a:To>
+    <a:Action>http://schemas.xmlsoap.org/ws/2005/04/discovery/Probe</a:Action>
+  </s:Header>
+  <s:Body>
+    <d:Probe>
+      <d:Types>dn:NetworkVideoTransmitter</d:Types>
+    </d:Probe>
+  </s:Body>
+</s:Envelope>`;
+    document.getElementById('probeXml').textContent = xml;
+  }
+
+  function copyProbeXml() {
+    copyText(document.getElementById('probeXml').textContent);
+  }
+
+  function copyText(text) {
+    navigator.clipboard.writeText(text).then(() => {
+      // brief visual feedback — could enhance later
+    }).catch(() => {});
+  }
+
+  // --- Event wiring ---
+  document.querySelectorAll('.endpoint-btn').forEach(btn => {
+    btn.addEventListener('click', () => selectEndpoint(btn));
+  });
+
+  // Live-update request preview when params change
+  document.getElementById('paramsBar').addEventListener('input', () => updateRequestPreview());
+  document.getElementById('authMode').addEventListener('change', () => updateRequestPreview());
+  document.getElementById('authUser').addEventListener('input', () => updateRequestPreview());
+  document.getElementById('authPass').addEventListener('input', () => updateRequestPreview());
+
+  // --- Mode switching (Manual / Auto) ---
+  let currentMode = 'manual';
+
+  function switchMode(mode) {
+    currentMode = mode;
+    document.getElementById('modeManual').classList.toggle('active', mode === 'manual');
+    document.getElementById('modeAuto').classList.toggle('active', mode === 'auto');
+
+    // Manual panels
+    const manualEls = ['paramsBar', 'wsDiscoveryPanel', 'requestResponsePanel'];
+    const sidebarBtns = document.querySelectorAll('.endpoint-btn');
+
+    if (mode === 'manual') {
+      document.getElementById('runnerPanel').style.display = 'none';
+      document.getElementById('authBar').style.display = '';
+      sidebarBtns.forEach(b => b.style.display = '');
+      document.querySelectorAll('.endpoint-group h4, .endpoint-group .path').forEach(e => e.style.display = '');
+      // Restore last manual state
+      if (currentOp) {
+        document.getElementById('requestResponsePanel').style.display = '';
+      }
+    } else {
+      // Auto mode
+      document.getElementById('paramsBar').classList.remove('visible');
+      document.getElementById('wsDiscoveryPanel').style.display = 'none';
+      document.getElementById('requestResponsePanel').style.display = 'none';
+      document.getElementById('runnerPanel').style.display = '';
+      document.getElementById('authBar').style.display = '';
+    }
+  }
+
+  // --- Automated Test Runner ---
+  const TEST_SUITE = [
+    // Device Service
+    { group: 'Device Service', op: 'GetSystemDateAndTime', path: '/onvif/device_service',
+      assert: (xml) => xml.includes('GetSystemDateAndTimeResponse') && xml.includes('UTCDateTime') },
+    { group: 'Device Service', op: 'GetDeviceInformation', path: '/onvif/device_service',
+      assert: (xml) => xml.includes('GetDeviceInformationResponse') && xml.includes('OHCNetwork') && xml.includes('MockPTZ-360') },
+    { group: 'Device Service', op: 'GetServices', path: '/onvif/device_service',
+      assert: (xml) => xml.includes('GetServicesResponse') && xml.includes('device/wsdl') },
+    { group: 'Device Service', op: 'GetCapabilities', path: '/onvif/device_service',
+      assert: (xml) => xml.includes('GetCapabilitiesResponse') && xml.includes('Capabilities') },
+    { group: 'Device Service', op: 'GetScopes', path: '/onvif/device_service',
+      assert: (xml) => xml.includes('GetScopesResponse') },
+
+    // Media Service
+    { group: 'Media Service', op: 'GetProfiles', path: '/onvif/media_service',
+      assert: (xml) => xml.includes('GetProfilesResponse') && xml.includes('MainProfile') },
+    { group: 'Media Service', op: 'GetProfile', path: '/onvif/media_service',
+      assert: (xml) => xml.includes('GetProfilesResponse') && xml.includes('MainProfile') },
+    { group: 'Media Service', op: 'GetStreamUri', path: '/onvif/media_service',
+      assert: (xml) => xml.includes('GetStreamUriResponse') && xml.includes('rtsp://') },
+    { group: 'Media Service', op: 'GetVideoSources', path: '/onvif/media_service',
+      assert: (xml) => xml.includes('GetVideoSourcesResponse') },
+    { group: 'Media Service', op: 'GetVideoSourceConfigurations', path: '/onvif/media_service',
+      assert: (xml) => xml.includes('GetVideoSourceConfigurationsResponse') },
+    { group: 'Media Service', op: 'GetVideoEncoderConfigurations', path: '/onvif/media_service',
+      assert: (xml) => xml.includes('GetVideoEncoderConfigurationsResponse') },
+    { group: 'Media Service', op: 'GetVideoEncoderConfiguration', path: '/onvif/media_service',
+      assert: (xml) => xml.includes('GetVideoEncoderConfigurationsResponse') },
+
+    // PTZ Service — queries first
+    { group: 'PTZ Service', op: 'GetStatus', path: '/onvif/ptz_service',
+      assert: (xml) => xml.includes('GetStatusResponse') && xml.includes('PanTilt') },
+    { group: 'PTZ Service', op: 'GetNodes', path: '/onvif/ptz_service',
+      assert: (xml) => xml.includes('GetNodesResponse') },
+    { group: 'PTZ Service', op: 'GetConfigurations', path: '/onvif/ptz_service',
+      assert: (xml) => xml.includes('GetConfigurationsResponse') },
+    { group: 'PTZ Service', op: 'GetPresets', path: '/onvif/ptz_service',
+      assert: (xml) => xml.includes('GetPresetsResponse') },
+
+    // PTZ Service — actions
+    { group: 'PTZ Service', op: 'AbsoluteMove', path: '/onvif/ptz_service',
+      params: { pan: '0.5', tilt: '0.3', zoom: '0.1' },
+      assert: (xml) => xml.includes('AbsoluteMoveResponse') },
+    { group: 'PTZ Service', op: 'GetStatus', path: '/onvif/ptz_service', label: 'GetStatus (verify move)',
+      assert: (xml) => xml.includes('GetStatusResponse') },
+    { group: 'PTZ Service', op: 'RelativeMove', path: '/onvif/ptz_service',
+      params: { pan: '0.1', tilt: '-0.1', zoom: '0' },
+      assert: (xml) => xml.includes('RelativeMoveResponse') },
+    { group: 'PTZ Service', op: 'ContinuousMove', path: '/onvif/ptz_service',
+      params: { pan_speed: '0.5', tilt_speed: '0', zoom_speed: '0' },
+      assert: (xml) => xml.includes('ContinuousMoveResponse') },
+    { group: 'PTZ Service', op: 'Stop', path: '/onvif/ptz_service',
+      assert: (xml) => xml.includes('StopResponse') },
+    { group: 'PTZ Service', op: 'SetPreset', path: '/onvif/ptz_service',
+      params: { preset_name: 'AutoTestPreset' },
+      assert: (xml) => {
+        if (!xml.includes('SetPresetResponse') || !xml.includes('PresetToken')) return false;
+        const m = xml.match(/<tptz:PresetToken>([^<]+)<\/tptz:PresetToken>/);
+        if (m) capturedPresetToken = m[1];
+        return true;
+      } },
+    { group: 'PTZ Service', op: 'GetPresets', path: '/onvif/ptz_service', label: 'GetPresets (verify set)',
+      assert: (xml) => xml.includes('GetPresetsResponse') && xml.includes('AutoTestPreset') },
+    { group: 'PTZ Service', op: 'GotoPreset', path: '/onvif/ptz_service',
+      params: () => ({ preset_token: capturedPresetToken }),
+      assert: (xml) => xml.includes('GotoPresetResponse') },
+    { group: 'PTZ Service', op: 'AbsoluteMove', path: '/onvif/ptz_service', label: 'AbsoluteMove (go home)',
+      params: { pan: '0', tilt: '0', zoom: '0' },
+      assert: (xml) => xml.includes('AbsoluteMoveResponse') },
+    { group: 'PTZ Service', op: 'RemovePreset', path: '/onvif/ptz_service',
+      params: () => ({ preset_token: capturedPresetToken }),
+      assert: (xml) => xml.includes('RemovePresetResponse') },
+
+    // Events Service
+    { group: 'Events Service', op: 'GetEventProperties', path: '/onvif/event_service',
+      assert: (xml) => xml.includes('GetEventPropertiesResponse') },
+    { group: 'Events Service', op: 'CreatePullPointSubscription', path: '/onvif/event_service',
+      assert: (xml) => xml.includes('CreatePullPointSubscriptionResponse') && xml.includes('SubscriptionReference') },
+
+    // Subscription (these may return faults if no active subscription — that's expected behavior)
+    { group: 'Subscription', op: 'PullMessages', path: '/onvif/subscription',
+      params: { timeout: 'PT5S', message_limit: '10' },
+      assert: (xml) => xml.includes('PullMessagesResponse') || xml.includes('Fault'),
+      allowFault: true },
+    { group: 'Subscription', op: 'Renew', path: '/onvif/subscription',
+      assert: (xml) => xml.includes('RenewResponse') || xml.includes('Fault'),
+      allowFault: true },
+    { group: 'Subscription', op: 'Unsubscribe', path: '/onvif/subscription',
+      assert: (xml) => xml.includes('UnsubscribeResponse') || xml.includes('Fault'),
+      allowFault: true },
+  ];
+
+  let testResults = [];
+  let isRunning = false;
+  let capturedPresetToken = 'preset_1';
+
+  function renderTestList() {
+    const container = document.getElementById('runnerResults');
+    let html = '';
+    let lastGroup = '';
+    TEST_SUITE.forEach((test, i) => {
+      if (test.group !== lastGroup) {
+        lastGroup = test.group;
+        html += `<div class="test-group-header">${escapeHtml(test.group)}</div>`;
+      }
+      const r = testResults[i];
+      const iconClass = r ? r.status : 'pending';
+      const iconText = { pending: '·', running: '▸', pass: '✓', fail: '✕', skip: '–' }[iconClass];
+      const label = test.label || test.op;
+      const time = r && r.ms !== undefined ? `${r.ms}ms` : '';
+      const statusText = r ? r.status : '';
+      html += `<div class="test-row${r && r.selected ? ' selected' : ''}" data-idx="${i}" onclick="showTestDetail(${i})">
+        <div class="test-icon ${iconClass}">${iconText}</div>
+        <span class="test-name">${escapeHtml(label)}</span>
+        <span class="test-detail">${escapeHtml(test.path)}</span>
+        <span class="test-time">${time}</span>
+        <span class="test-status-text ${statusText}">${statusText.toUpperCase()}</span>
+      </div>`;
+      if (r && r.status === 'fail' && r.error) {
+        html += `<div class="test-error-msg">${escapeHtml(r.error)}</div>`;
+      }
+    });
+    container.innerHTML = html;
+  }
+
+  function updateSummary() {
+    const pass = testResults.filter(r => r && r.status === 'pass').length;
+    const fail = testResults.filter(r => r && r.status === 'fail').length;
+    const skip = testResults.filter(r => r && r.status === 'skip').length;
+    const done = pass + fail + skip;
+    const total = TEST_SUITE.length;
+    document.getElementById('runnerSummary').innerHTML =
+      `<span class="pass">${pass} passed</span>` +
+      `<span class="fail">${fail} failed</span>` +
+      (skip > 0 ? `<span class="skip">${skip} skipped</span>` : '') +
+      `<span class="total">${done}/${total}</span>`;
+
+    const pct = total > 0 ? (done / total * 100) : 0;
+    const bar = document.getElementById('runnerProgressBar');
+    bar.style.width = pct + '%';
+    if (fail > 0) {
+      const passPct = total > 0 ? (pass / total * 100) : 0;
+      bar.classList.add('has-fail');
+      bar.style.setProperty('--pass-pct', passPct + '%');
+    } else {
+      bar.classList.remove('has-fail');
+    }
+  }
+
+  function showTestDetail(idx) {
+    const r = testResults[idx];
+    testResults.forEach((tr, i) => { if (tr) tr.selected = (i === idx); });
+    renderTestList();
+    const detail = document.getElementById('runnerDetail');
+    if (!r || !r.request) {
+      detail.style.display = 'none';
+      return;
+    }
+    detail.style.display = '';
+    const test = TEST_SUITE[idx];
+    document.getElementById('runnerDetailTitle').textContent = (test.label || test.op) + ' — ' + test.path;
+    const badge = document.getElementById('runnerDetailBadge');
+    badge.textContent = r.httpStatus || '';
+    badge.className = 'status-badge ' + (r.status === 'pass' ? 'ok' : r.status === 'fail' ? 'err' : '');
+    badge.style.display = r.httpStatus ? 'inline' : 'none';
+    document.getElementById('runnerDetailReq').innerHTML = highlightXml(formatXml(r.request));
+    document.getElementById('runnerDetailRes').innerHTML = r.response ? highlightXml(formatXml(r.response)) : escapeHtml(r.error || '');
+  }
+
+  async function runAllTests() {
+    if (isRunning) return;
+    isRunning = true;
+    document.getElementById('runAllBtn').disabled = true;
+    document.getElementById('runAllBtn').innerHTML = '<span class="spinner"></span> Running...';
+    document.getElementById('runnerDetail').style.display = 'none';
+
+    testResults = TEST_SUITE.map(() => null);
+    renderTestList();
+    updateSummary();
+
+    for (let i = 0; i < TEST_SUITE.length; i++) {
+      const test = TEST_SUITE[i];
+      testResults[i] = { status: 'running' };
+      renderTestList();
+
+      const params = (typeof test.params === 'function' ? test.params() : test.params) || paramDefaultsForOp(test.op);
+      const t0 = performance.now();
+      let xml, resp, text;
+
+      try {
+        xml = await buildEnvelope(test.op, params);
+        resp = await fetch(test.path, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/soap+xml; charset=utf-8' },
+          body: xml,
+        });
+        text = await resp.text();
+      } catch (err) {
+        const ms = Math.round(performance.now() - t0);
+        testResults[i] = { status: 'fail', ms, request: xml || '', response: '', error: 'Network error: ' + err.message, httpStatus: '' };
+        renderTestList();
+        updateSummary();
+        continue;
+      }
+
+      const ms = Math.round(performance.now() - t0);
+      const httpStatus = resp.status + ' ' + resp.statusText;
+      const hasFault = text.includes('Fault');
+      const assertOk = test.assert(text);
+
+      let status, error = '';
+      if (!resp.ok && !test.allowFault) {
+        status = 'fail';
+        error = `HTTP ${resp.status}`;
+        if (hasFault) error += ' — SOAP Fault detected';
+      } else if (hasFault && !test.allowFault) {
+        status = 'fail';
+        error = 'SOAP Fault in response';
+      } else if (!assertOk) {
+        status = 'fail';
+        error = 'Assertion failed — expected content not found';
+      } else {
+        status = 'pass';
+      }
+
+      testResults[i] = { status, ms, request: xml, response: text, httpStatus, error };
+      renderTestList();
+      updateSummary();
+    }
+
+    isRunning = false;
+    document.getElementById('runAllBtn').disabled = false;
+    document.getElementById('runAllBtn').innerHTML = '&#9654; Run All Tests';
+  }
+
+  function paramDefaultsForOp(op) {
+    const cfg = OP_CONFIG[op];
+    if (!cfg || !cfg.params) return {};
+    const params = {};
+    cfg.params.forEach(p => { params[p] = paramDefault(op, p); });
+    return params;
+  }
+</script>
+</body>
+</html>

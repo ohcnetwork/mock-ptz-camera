@@ -12,6 +12,7 @@ A software-defined mock PTZ (Pan-Tilt-Zoom) IP camera with RTSP streaming, ONVIF
 - **360° Panoramic Renderer** — Simulates a PTZ camera navigating an equirectangular 360° panoramic image with perspective projection (default)
 - **Test Pattern Renderer** — Built-in test pattern with crosshair and zoom indicator (no video file needed)
 - **Web UI** — MJPEG live preview with D-pad, zoom, speed, absolute move, and preset controls over WebSocket
+- **API Test UI** — Built-in ONVIF endpoint tester with manual and automated test modes
 - **WS-Discovery** — Responds to ONVIF probe messages on `239.255.255.250:3702`
 - **Unified Auth** — Single credential set for ONVIF, RTSP, and Web UI (Basic auth)
 
@@ -75,6 +76,7 @@ All settings are configurable via environment variables:
 ## Endpoints
 
 - **Web UI**: `http://<host>:8080/` (Basic auth)
+- **API Test UI**: `http://<host>:8080/test` (Basic auth)
 - **MJPEG Stream**: `http://<host>:8080/api/stream` (Basic auth)
 - **WebSocket**: `ws://<host>:8080/ws`
 - **RTSP Stream**: `rtsp://<host>:8554/stream`
@@ -97,6 +99,23 @@ Open `http://localhost:8080` in a browser (credentials: `admin` / `admin`). The 
 | `+` / `-` | Relative zoom in/out |
 | `H` | Home (go to 0, 0, 0) |
 | `Space` | Stop movement |
+
+### API Test UI
+
+Open `http://localhost:8080/test` to access the built-in ONVIF endpoint tester. It supports two modes:
+
+**Manual mode** — Select any ONVIF endpoint from the sidebar, configure parameters, and send individual SOAP requests. The request and response XML are shown side-by-side with syntax highlighting. Supports all auth modes (None, PasswordText, PasswordDigest).
+
+**Automated mode** — Click "Run All" to switch to the automated test runner, which executes a suite of 30+ tests across all ONVIF services in sequence:
+
+- **Device Service** — GetSystemDateAndTime, GetDeviceInformation, GetServices, GetCapabilities, GetScopes
+- **Media Service** — GetProfiles, GetProfile, GetStreamUri, GetVideoSources, encoder configurations
+- **PTZ Service** — GetStatus, GetNodes, GetConfigurations, AbsoluteMove, RelativeMove, ContinuousMove, Stop, preset CRUD (Set → Get → Goto → Remove)
+- **Events & Subscription** — GetEventProperties, CreatePullPointSubscription, PullMessages, Renew, Unsubscribe
+
+Each test validates HTTP status, checks for unexpected SOAP faults, and asserts expected content in the response. Results show real-time pass/fail status, timing, and a progress bar. Click any test row to inspect the full request/response XML.
+
+The test page also includes a **WS-Discovery** section with copyable Probe XML and a ready-to-run Python CLI command for testing UDP multicast discovery.
 
 ### Play the RTSP stream
 
@@ -154,7 +173,10 @@ The camera is discoverable via WS-Discovery and compatible with ONVIF Device Man
 │   ├── mjpeg.go         # MJPEG multipart stream handler
 │   ├── framestore.go    # Thread-safe JPEG frame store
 │   └── static/
-│       └── index.html   # Web UI (single-page, shadcn-inspired dark theme)
+│       ├── index.html   # Camera control UI (single-page, shadcn-inspired dark theme)
+│       ├── test.html    # API test UI with manual and automated test runner
+│       ├── common.css   # Shared design system (CSS variables, layout, components)
+│       └── common.js    # Shared JS utilities (escapeHtml, formatXml)
 ├── Dockerfile
 ├── docker-compose.yml
 └── assets/
