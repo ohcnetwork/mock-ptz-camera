@@ -25,7 +25,6 @@ import (
 	"sync"
 
 	log "github.com/sirupsen/logrus"
-	ffmpeg "github.com/u2takey/ffmpeg-go"
 )
 
 // Encoder wraps an FFmpeg H.264 encoding subprocess.
@@ -137,7 +136,7 @@ func h264Level(width, height, fps int) string {
 //   - Scene detection disabled (sc_threshold=0) for predictable IDR spacing.
 //   - Single thread to avoid contention with the Go render workers.
 //   - Output: raw H.264 Annex B on stdout.
-func (e *Encoder) buildStream() *ffmpeg.Stream {
+func (e *Encoder) buildCmd() *exec.Cmd {
 	gop := e.fps // 1 IDR per second (fewer expensive I-frames)
 	if gop < 1 {
 		gop = 1
@@ -145,37 +144,39 @@ func (e *Encoder) buildStream() *ffmpeg.Stream {
 	level := h264Level(e.width, e.height, e.fps)
 	log.WithField("level", level).Info("auto-selected H.264 level")
 
-	return ffmpeg.Input("pipe:0", ffmpeg.KwArgs{
-		"f":       "rawvideo",
-		"pix_fmt": "rgb24",
-		"s":       fmt.Sprintf("%dx%d", e.width, e.height),
-		"r":       fmt.Sprintf("%d", e.fps),
-	}).Output("pipe:1", ffmpeg.KwArgs{
-		"c:v":           "libx264",
-		"preset":        "ultrafast",
-		"tune":          "zerolatency",
-		"profile:v":     "baseline",
-		"level":         level,
-		"pix_fmt":       "yuv420p",
-		"b:v":           e.bitrate,
-		"maxrate":       e.bitrate,
-		"bufsize":       e.bitrate,
-		"g":             fmt.Sprintf("%d", gop),
-		"keyint_min":    fmt.Sprintf("%d", gop),
-		"sc_threshold":  "0",
-		"f":             "h264",
-		"an":            "",
-		"flush_packets": "1",
-		"threads":       "1",
-	}).GlobalArgs("-v", "warning").Silent(true)
+	gopStr := fmt.Sprintf("%d", gop)
+	return exec.Command("ffmpeg",
+		"-v", "warning",
+		"-f", "rawvideo",
+		"-pix_fmt", "rgb24",
+		"-s", fmt.Sprintf("%dx%d", e.width, e.height),
+		"-r", fmt.Sprintf("%d", e.fps),
+		"-i", "pipe:0",
+		"-c:v", "libx264",
+		"-preset", "ultrafast",
+		"-tune", "zerolatency",
+		"-profile:v", "baseline",
+		"-level", level,
+		"-pix_fmt", "yuv420p",
+		"-b:v", e.bitrate,
+		"-maxrate", e.bitrate,
+		"-bufsize", e.bitrate,
+		"-g", gopStr,
+		"-keyint_min", gopStr,
+		"-sc_threshold", "0",
+		"-f", "h264",
+		"-an",
+		"-flush_packets", "1",
+		"-threads", "1",
+		"pipe:1",
+	)
 }
 
 // startProcess launches the FFmpeg subprocess and wires up stdin/stdout/stderr.
 // It spawns three goroutines: one to log stderr, one to parse NALUs from stdout,
 // and one to monitor the process and auto-restart on unexpected exit.
 func (e *Encoder) startProcess() error {
-	stream := e.buildStream()
-	cmd := stream.Compile()
+	cmd := e.buildCmd()
 	log.WithField("args", cmd.Args).Debug("starting ffmpeg encoder")
 
 	stdin, err := cmd.StdinPipe()
