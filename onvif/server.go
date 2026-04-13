@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 
@@ -41,30 +42,52 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/onvif/subscription", s.handleSubscription)
 }
 
-// serviceURL builds an HTTP(S) URL for the given path on this server.
-func (s *Server) serviceURL(path string) string {
-	scheme := "http"
-	if s.cfg.TLSEnabled {
-		scheme = "https"
+// requestHost extracts the hostname from the incoming HTTP request,
+// falling back to the configured hostIP when the Host header is absent.
+func (s *Server) requestHost(r *http.Request) string {
+	host := r.Host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
 	}
-	return fmt.Sprintf("%s://%s:%d%s", scheme, s.hostIP, s.cfg.WebPort, path)
+	if host == "" {
+		return s.hostIP
+	}
+	return host
 }
 
-func (s *Server) rtspURL() string {
+// httpBaseURL returns the scheme://host:port base for HTTP(S) URLs,
+// derived from the incoming request.
+func (s *Server) httpBaseURL(r *http.Request) string {
+	host := s.requestHost(r)
+	scheme := "http"
+	port := s.cfg.WebPort
+	if r.TLS != nil {
+		scheme = "https"
+		if s.cfg.TLSPort != 0 {
+			port = s.cfg.TLSPort
+		}
+	}
+	return fmt.Sprintf("%s://%s:%d", scheme, host, port)
+}
+
+// rtspBaseURL returns the scheme://host:port base for RTSP(S) URLs,
+// derived from the incoming request.
+func (s *Server) rtspBaseURL(r *http.Request) string {
+	host := s.requestHost(r)
 	scheme := "rtsp"
-	if s.cfg.TLSEnabled {
+	if r.TLS != nil {
 		scheme = "rtsps"
 	}
-	return fmt.Sprintf("%s://%s:%d/stream", scheme, s.hostIP, s.cfg.RTSPPort)
+	return fmt.Sprintf("%s://%s:%d", scheme, host, s.cfg.RTSPPort)
 }
 
 // serviceURLs returns all ONVIF service endpoint URLs.
-func (s *Server) serviceURLs() serviceURLsData {
+func serviceURLs(base string) serviceURLsData {
 	return serviceURLsData{
-		DeviceURL: s.serviceURL("/onvif/device_service"),
-		MediaURL:  s.serviceURL("/onvif/media_service"),
-		PTZURL:    s.serviceURL("/onvif/ptz_service"),
-		EventsURL: s.serviceURL("/onvif/event_service"),
+		DeviceURL: base + "/onvif/device_service",
+		MediaURL:  base + "/onvif/media_service",
+		PTZURL:    base + "/onvif/ptz_service",
+		EventsURL: base + "/onvif/event_service",
 	}
 }
 
@@ -156,15 +179,16 @@ func (s *Server) handleDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = env
+	base := s.httpBaseURL(r)
 	switch action {
 	case "GetSystemDateAndTime":
 		s.getSystemDateAndTime(w)
 	case "GetDeviceInformation":
 		s.getDeviceInformation(w)
 	case "GetServices":
-		s.getServices(w)
+		s.getServices(w, base)
 	case "GetCapabilities":
-		s.getCapabilities(w)
+		s.getCapabilities(w, base)
 	case "GetScopes":
 		s.getScopes(w)
 	default:
@@ -183,7 +207,7 @@ func (s *Server) handleMedia(w http.ResponseWriter, r *http.Request) {
 	case "GetProfiles", "GetProfile":
 		s.getProfiles(w)
 	case "GetStreamUri":
-		s.getStreamUri(w)
+		s.getStreamUri(w, s.rtspBaseURL(r))
 	case "GetVideoSources":
 		s.getVideoSources(w)
 	case "GetVideoSourceConfigurations":
@@ -239,7 +263,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	case "GetEventProperties":
 		s.getEventProperties(w)
 	case "CreatePullPointSubscription":
-		s.createPullPointSubscription(w, env)
+		s.createPullPointSubscription(w, env, s.httpBaseURL(r))
 	default:
 		log.WithField("action", action).Warn("unknown ONVIF events action")
 		writeSOAPFault(w, "s:Sender", "Unknown action: "+action)

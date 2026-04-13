@@ -18,12 +18,12 @@ func (s *Server) getDeviceInformation(w http.ResponseWriter) {
 	writeSOAPResponse(w, renderTemplate("getDeviceInformation", nil))
 }
 
-func (s *Server) getServices(w http.ResponseWriter) {
-	writeSOAPResponse(w, renderTemplate("getServices", s.serviceURLs()))
+func (s *Server) getServices(w http.ResponseWriter, base string) {
+	writeSOAPResponse(w, renderTemplate("getServices", serviceURLs(base)))
 }
 
-func (s *Server) getCapabilities(w http.ResponseWriter) {
-	writeSOAPResponse(w, renderTemplate("getCapabilities", s.serviceURLs()))
+func (s *Server) getCapabilities(w http.ResponseWriter, base string) {
+	writeSOAPResponse(w, renderTemplate("getCapabilities", serviceURLs(base)))
 }
 
 func (s *Server) getScopes(w http.ResponseWriter) {

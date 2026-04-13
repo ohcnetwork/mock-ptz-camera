@@ -121,7 +121,7 @@ func (s *Server) getEventProperties(w http.ResponseWriter) {
 	writeSOAPResponse(w, renderTemplate("getEventProperties", nil))
 }
 
-func (s *Server) createPullPointSubscription(w http.ResponseWriter, env *SOAPEnvelope) {
+func (s *Server) createPullPointSubscription(w http.ResponseWriter, env *SOAPEnvelope, base string) {
 	timeout := 60 * time.Second
 	var req struct {
 		XMLName                xml.Name `xml:"CreatePullPointSubscription"`
@@ -134,7 +134,7 @@ func (s *Server) createPullPointSubscription(w http.ResponseWriter, env *SOAPEnv
 	}
 
 	sub := s.events.createSubscription(timeout)
-	refURL := fmt.Sprintf("%s?id=%s", s.serviceURL("/onvif/subscription"), sub.ID)
+	refURL := fmt.Sprintf("%s/onvif/subscription?id=%s", base, sub.ID)
 	body := renderTemplate("createPullPointSubscription", subscriptionData{
 		Address:         refURL,
 		CurrentTime:     time.Now().UTC().Format(time.RFC3339),
