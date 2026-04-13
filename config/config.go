@@ -19,6 +19,12 @@ type Config struct {
 	Renderer  string
 	PanoImage string
 	HostIP    string
+
+	TLSEnabled  bool
+	TLSCertFile string
+	TLSKeyFile  string
+	TLSCertDir  string
+	TLSPort     int
 }
 
 func Load() *Config {
@@ -35,11 +41,18 @@ func Load() *Config {
 		Renderer:  envOrDefault("RENDERER", "pano"),
 		PanoImage: envOrDefault("PANO_IMAGE", "assets/default_pano.jpg"),
 		HostIP:    os.Getenv("HOST_IP"),
+
+		TLSEnabled:  envBoolOrDefault("TLS_ENABLED", true),
+		TLSCertFile: os.Getenv("TLS_CERT_FILE"),
+		TLSKeyFile:  os.Getenv("TLS_KEY_FILE"),
+		TLSCertDir:  envOrDefault("TLS_CERT_DIR", "certs"),
+		TLSPort:     envIntOrDefault("TLS_PORT", 0),
 	}
 }
 
 func (c *Config) RTSPAddress() string { return fmt.Sprintf(":%d", c.RTSPPort) }
 func (c *Config) WebAddress() string  { return fmt.Sprintf(":%d", c.WebPort) }
+func (c *Config) TLSAddress() string  { return fmt.Sprintf(":%d", c.TLSPort) }
 
 func envOrDefault(key, def string) string {
 	if v := os.Getenv(key); v != "" {
@@ -53,6 +66,20 @@ func envIntOrDefault(key string, def int) int {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
 		}
+	}
+	return def
+}
+
+func envBoolOrDefault(key string, def bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	switch v {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
 	}
 	return def
 }

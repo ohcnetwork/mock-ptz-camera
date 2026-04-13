@@ -1175,7 +1175,7 @@ except socket.timeout:
     { group: 'Media Service', op: 'GetProfile', path: '/onvif/media_service',
       assert: (xml) => xml.includes('GetProfilesResponse') && xml.includes('MainProfile') },
     { group: 'Media Service', op: 'GetStreamUri', path: '/onvif/media_service',
-      assert: (xml) => xml.includes('GetStreamUriResponse') && xml.includes('rtsp://') },
+      assert: (xml) => xml.includes('GetStreamUriResponse') && (xml.includes('rtsp://') || xml.includes('rtsps://')) },
     { group: 'Media Service', op: 'GetVideoSources', path: '/onvif/media_service',
       assert: (xml) => xml.includes('GetVideoSourcesResponse') },
     { group: 'Media Service', op: 'GetVideoSourceConfigurations', path: '/onvif/media_service',

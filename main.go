@@ -1,23 +1,25 @@
 package main
 
 import (
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	log "github.com/sirupsen/logrus"
 
 	"github.com/ohcnetwork/mock-ptz-camera/auth"
 	"github.com/ohcnetwork/mock-ptz-camera/config"
+	"github.com/ohcnetwork/mock-ptz-camera/netutil"
 	"github.com/ohcnetwork/mock-ptz-camera/onvif"
 	"github.com/ohcnetwork/mock-ptz-camera/ptz"
 	"github.com/ohcnetwork/mock-ptz-camera/renderer"
 	"github.com/ohcnetwork/mock-ptz-camera/rtsp"
 	"github.com/ohcnetwork/mock-ptz-camera/web"
-	
 )
 
 func main() {
@@ -42,14 +44,21 @@ func main() {
 
 	hostIP := cfg.HostIP
 	if hostIP == "" {
-		hostIP = detectHostIP()
+		hostIP = netutil.DetectHostIP()
 		log.WithField("ip", hostIP).Info("detected host IP")
 	} else {
 		log.WithField("ip", hostIP).Info("using HOST_IP override")
 	}
 
+	httpScheme := "http"
+	rtspScheme := "rtsp"
+	if cfg.TLSEnabled {
+		httpScheme = "https"
+		rtspScheme = "rtsps"
+	}
+
 	eventsService := onvif.NewEventsService(
-		fmt.Sprintf("http://%s:%d/onvif/subscription", hostIP, cfg.WebPort),
+		fmt.Sprintf("%s://%s:%d/onvif/subscription", httpScheme, hostIP, cfg.WebPort),
 	)
 
 	ptzState := ptz.NewState(func(status ptz.Status) {
@@ -93,10 +102,39 @@ func main() {
 	}
 	encoder.Stop()
 
+	// ---- TLS setup ----
+	var tlsCfg *tls.Config
+	if cfg.TLSEnabled {
+		certFile := cfg.TLSCertFile
+		keyFile := cfg.TLSKeyFile
+		if certFile == "" || keyFile == "" {
+			certFile = filepath.Join(cfg.TLSCertDir, "server.crt")
+			keyFile = filepath.Join(cfg.TLSCertDir, "server.key")
+		}
+		cert, err := netutil.LoadOrGenerateCert(certFile, keyFile, []string{hostIP})
+		if err != nil {
+			log.WithError(err).Fatal("failed to load/generate TLS certificate")
+		}
+		tlsCfg = netutil.NewTLSConfig(cert)
+		log.WithFields(log.Fields{
+			"cert": certFile, "key": keyFile,
+		}).Info("TLS enabled")
+	}
+
+	// ---- RTSP server ----
 	rtspServer, err := rtsp.NewServer(cfg.RTSPAddress(), creds, sps, pps)
 	if err != nil {
 		log.WithError(err).Fatal("failed to create RTSP server")
 	}
+
+	if cfg.TLSEnabled {
+		rtspLn, err := net.Listen("tcp", cfg.RTSPAddress())
+		if err != nil {
+			log.WithError(err).Fatal("failed to listen on RTSP address")
+		}
+		rtspServer.SetListener(netutil.NewTransparentTLSListener(rtspLn, tlsCfg))
+	}
+
 	if err := rtspServer.Start(); err != nil {
 		log.WithError(err).Fatal("failed to start RTSP server")
 	}
@@ -127,18 +165,47 @@ func main() {
 	webServer.RegisterRoutes(mux)
 
 	httpServer := &http.Server{
-		Addr:    cfg.WebAddress(),
 		Handler: mux,
 	}
-	go func() {
-		log.WithField("addr", cfg.WebAddress()).Info("web server listening")
-		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.WithError(err).Fatal("web server error")
-		}
-	}()
 
+	// ---- Web server with optional TLS ----
+	switch {
+	case !cfg.TLSEnabled:
+		// Plain HTTP only.
+		httpServer.Addr = cfg.WebAddress()
+		netutil.ServeAsync("HTTP", cfg.WebAddress(), httpServer.ListenAndServe)
+
+	case cfg.TLSPort == 0:
+		// TLS mux: serve both HTTP and HTTPS on the same port.
+		webLn, err := net.Listen("tcp", cfg.WebAddress())
+		if err != nil {
+			log.WithError(err).Fatal("failed to listen on web address")
+		}
+		split := netutil.NewSplitListener(webLn)
+		go split.Serve()
+
+		httpsServer := &http.Server{Handler: mux, TLSConfig: tlsCfg}
+		netutil.ServeAsync("HTTP+HTTPS mux", cfg.WebAddress(), func() error {
+			return httpsServer.ServeTLS(split.TLS(), "", "")
+		})
+		netutil.ServeAsync("", "", func() error {
+			return httpServer.Serve(split.Plain())
+		})
+
+	default:
+		// Separate ports: HTTP on WebPort, HTTPS on TLSPort.
+		httpServer.Addr = cfg.WebAddress()
+		netutil.ServeAsync("HTTP", cfg.WebAddress(), httpServer.ListenAndServe)
+
+		httpsServer := &http.Server{Addr: cfg.TLSAddress(), Handler: mux, TLSConfig: tlsCfg}
+		netutil.ServeAsync("HTTPS", cfg.TLSAddress(), func() error {
+			return httpsServer.ListenAndServeTLS("", "")
+		})
+	}
+
+	// ---- ONVIF discovery ----
 	discovery := onvif.NewDiscoveryServer(
-		fmt.Sprintf("http://%s:%d/onvif/device_service", hostIP, cfg.WebPort),
+		fmt.Sprintf("%s://%s:%d/onvif/device_service", httpScheme, hostIP, cfg.WebPort),
 	)
 	if err := discovery.Start(); err != nil {
 		log.WithError(err).Warn("WS-Discovery failed (non-fatal)")
@@ -146,28 +213,18 @@ func main() {
 		defer discovery.Stop()
 	}
 
+	// ---- Ready ----
 	log.Info("mock PTZ camera ready")
-	log.Infof("RTSP: rtsp://%s:%d/stream", hostIP, cfg.RTSPPort)
-	log.Infof("ONVIF: http://%s:%d/onvif/device_service", hostIP, cfg.WebPort)
-	log.Infof("Web UI: http://%s:%d/", hostIP, cfg.WebPort)
+	log.Infof("RTSP:  %s://%s:%d/stream", rtspScheme, hostIP, cfg.RTSPPort)
+	log.Infof("ONVIF: %s://%s:%d/onvif/device_service", httpScheme, hostIP, cfg.WebPort)
+	if cfg.TLSEnabled && cfg.TLSPort != 0 {
+		log.Infof("Web UI: http://%s:%d/  https://%s:%d/", hostIP, cfg.WebPort, hostIP, cfg.TLSPort)
+	} else {
+		log.Infof("Web UI: %s://%s:%d/", httpScheme, hostIP, cfg.WebPort)
+	}
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
 	log.Info("shutting down...")
-}
-
-func detectHostIP() string {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return "127.0.0.1"
-	}
-	for _, addr := range addrs {
-		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-			if ipnet.IP.To4() != nil {
-				return ipnet.IP.String()
-			}
-		}
-	}
-	return "127.0.0.1"
 }

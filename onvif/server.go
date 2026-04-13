@@ -41,13 +41,21 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/onvif/subscription", s.handleSubscription)
 }
 
-// serviceURL builds an HTTP URL for the given path on this server.
+// serviceURL builds an HTTP(S) URL for the given path on this server.
 func (s *Server) serviceURL(path string) string {
-	return fmt.Sprintf("http://%s:%d%s", s.hostIP, s.cfg.WebPort, path)
+	scheme := "http"
+	if s.cfg.TLSEnabled {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://%s:%d%s", scheme, s.hostIP, s.cfg.WebPort, path)
 }
 
 func (s *Server) rtspURL() string {
-	return fmt.Sprintf("rtsp://%s:%d/stream", s.hostIP, s.cfg.RTSPPort)
+	scheme := "rtsp"
+	if s.cfg.TLSEnabled {
+		scheme = "rtsps"
+	}
+	return fmt.Sprintf("%s://%s:%d/stream", scheme, s.hostIP, s.cfg.RTSPPort)
 }
 
 // serviceURLs returns all ONVIF service endpoint URLs.

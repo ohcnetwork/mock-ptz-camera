@@ -1,6 +1,7 @@
 package rtsp
 
 import (
+	"net"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -71,6 +72,15 @@ func NewServer(address string, creds auth.Credentials, sps, pps []byte) (*Server
 	}
 
 	return s, nil
+}
+
+// SetListener overrides the TCP listener used by the RTSP server.
+// Must be called before Start(). This is used to provide a
+// TLS-muxing listener that transparently handles both RTSP and RTSPS.
+func (s *Server) SetListener(ln net.Listener) {
+	s.lib.Listen = func(network, address string) (net.Listener, error) {
+		return ln, nil
+	}
 }
 
 // SetSubscriber configures the function used to create AU subscriptions

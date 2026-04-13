@@ -13,6 +13,7 @@ A software-defined mock PTZ (Pan-Tilt-Zoom) IP camera with RTSP streaming, ONVIF
 - **Test Pattern Renderer** — Built-in test pattern with crosshair and zoom indicator (no video file needed)
 - **Web UI** — Low-latency H.264 live preview (via WebCodecs VideoDecoder) with D-pad, zoom, speed, absolute move, and preset controls over WebSocket
 - **API Test UI** — Built-in ONVIF endpoint tester with manual and automated test modes
+- **TLS / HTTPS / RTSPS** — Enabled by default with auto-generated self-signed certificates (ECDSA P-256, TLS 1.2+). Supports same-port HTTP/HTTPS muxing and transparent RTSP/RTSPS on a single port. Bring your own certs or disable TLS entirely.
 - **WS-Discovery** — Responds to ONVIF probe messages on `239.255.255.250:3702`
 - **Unified Auth** — Single credential set for ONVIF, RTSP, and Web UI (Basic auth)
 
@@ -81,18 +82,25 @@ All settings are configurable via environment variables:
 | `RENDERER` | `pano` | Renderer type: `pano` or `testpattern` |
 | `PANO_IMAGE` | `assets/default_pano.jpg` | Path to equirectangular panoramic image (used when `RENDERER=pano`) |
 | `HOST_IP` | *(auto-detect)* | IP address advertised in ONVIF/RTSP URLs. Set when running in Docker or when auto-detection picks the wrong interface |
+| `TLS_ENABLED` | `true` | Enable TLS (HTTPS + RTSPS). Set `false` for plain HTTP/RTSP only |
+| `TLS_CERT_FILE` | *(empty)* | Path to custom TLS certificate PEM file. If empty, a self-signed cert is auto-generated |
+| `TLS_KEY_FILE` | *(empty)* | Path to custom TLS private key PEM file. If empty, a self-signed key is auto-generated |
+| `TLS_CERT_DIR` | `certs` | Directory for auto-generated certificate and key files |
+| `TLS_PORT` | `0` | Separate HTTPS port. `0` = mux HTTP and HTTPS on `WEB_PORT` |
 
 ## Endpoints
 
-- **Web UI**: `http://<host>:8080/` (Basic auth)
-- **API Test UI**: `http://<host>:8080/test` (Basic auth)
-- **Video WebSocket**: `ws://<host>:8080/ws/video` (H.264 Annex B via WebCodecs)
-- **Control WebSocket**: `ws://<host>:8080/ws` (PTZ commands)
-- **RTSP Stream**: `rtsp://<host>:8554/stream`
-- **ONVIF Device Service**: `http://<host>:8080/onvif/device_service`
-- **ONVIF Media Service**: `http://<host>:8080/onvif/media_service`
-- **ONVIF PTZ Service**: `http://<host>:8080/onvif/ptz_service`
-- **ONVIF Events Service**: `http://<host>:8080/onvif/events_service`
+With TLS enabled (default), both HTTP and HTTPS are served on the same port. WebSocket connections auto-negotiate `ws://` or `wss://` based on the page protocol.
+
+- **Web UI**: `https://<host>:8080/` or `http://<host>:8080/` (Basic auth)
+- **API Test UI**: `https://<host>:8080/test` (Basic auth)
+- **Video WebSocket**: `wss://<host>:8080/ws/video` (H.264 Annex B via WebCodecs)
+- **Control WebSocket**: `wss://<host>:8080/ws` (PTZ commands)
+- **RTSP Stream**: `rtsp://<host>:8554/stream` or `rtsps://<host>:8554/stream` (same port)
+- **ONVIF Device Service**: `https://<host>:8080/onvif/device_service`
+- **ONVIF Media Service**: `https://<host>:8080/onvif/media_service`
+- **ONVIF PTZ Service**: `https://<host>:8080/onvif/ptz_service`
+- **ONVIF Events Service**: `https://<host>:8080/onvif/events_service`
 
 ## Testing
 
@@ -129,8 +137,13 @@ The test page also includes a **WS-Discovery** section with copyable Probe XML a
 ### Play the RTSP stream
 
 ```bash
+# Plain RTSP (works on the same port even with TLS enabled)
 ffplay rtsp://admin:admin@localhost:8554/stream
-# or
+
+# RTSPS (TLS-encrypted, requires -rtsp_transport tcp)
+ffplay -rtsp_transport tcp rtsps://admin:admin@localhost:8554/stream
+
+# mpv
 mpv rtsp://admin:admin@localhost:8554/stream
 ```
 
@@ -138,7 +151,8 @@ mpv rtsp://admin:admin@localhost:8554/stream
 
 ```bash
 # Get device info (no auth required for GetSystemDateAndTime)
-curl -X POST http://localhost:8080/onvif/device_service \
+# Use -k with self-signed certs, or use http:// (muxed on same port)
+curl -k -X POST https://localhost:8080/onvif/device_service \
   -H "Content-Type: application/soap+xml" \
   -d '<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
     <s:Body><GetSystemDateAndTime xmlns="http://www.onvif.org/ver10/device/wsdl"/></s:Body>
@@ -176,6 +190,10 @@ The camera is discoverable via WS-Discovery and compatible with ONVIF Device Man
 │   ├── ptz.go           # ONVIF PTZ service
 │   ├── events.go        # ONVIF Events (PullPoint subscriptions)
 │   └── discovery.go     # WS-Discovery multicast responder
+├── netutil/
+│   ├── cert.go          # Self-signed cert generation (ECDSA P-256) and loading
+│   ├── config.go        # TLS config builder (TLS 1.2+, modern ciphers)
+│   └── mux.go           # TLS muxing (SplitListener for HTTP, TransparentTLSListener for RTSP)
 ├── web/
 │   ├── server.go        # HTTP server, route registration, auth middleware
 │   ├── websocket.go     # WebSocket PTZ command handler
@@ -190,6 +208,41 @@ The camera is discoverable via WS-Discovery and compatible with ONVIF Device Man
 └── assets/
     └── default_pano.jpg # Default equirectangular panoramic image (CC0)
 ```
+
+## TLS / HTTPS / RTSPS
+
+TLS is **enabled by default**. On first startup, the server generates a self-signed ECDSA P-256 certificate and persists it in the `certs/` directory so it is reused across restarts.
+
+### How it works
+
+- **Web server** — By default, HTTP and HTTPS are muxed on the same port (`WEB_PORT`). The server peeks at the first byte of each connection to detect TLS ClientHello (`0x16`) and routes accordingly. Browsers and curl work with either `http://` or `https://`.
+- **RTSP server** — Both `rtsp://` and `rtsps://` are served on the same port (`RTSP_PORT`). TLS detection is transparent to the RTSP protocol handler. Use `-rtsp_transport tcp` for RTSPS clients.
+- **WebSocket** — The web UI JavaScript already uses `location.protocol` to pick `ws://` or `wss://` automatically — no configuration needed.
+
+### TLS configuration examples
+
+```bash
+# Disable TLS entirely (plain HTTP/RTSP only)
+TLS_ENABLED=false ./mock-ptz-camera
+
+# Use your own certificate
+TLS_CERT_FILE=/path/to/cert.pem TLS_KEY_FILE=/path/to/key.pem ./mock-ptz-camera
+
+# HTTPS on a separate port (HTTP on 8080, HTTPS on 8443)
+TLS_PORT=8443 ./mock-ptz-camera
+
+# Change auto-generated cert storage directory
+TLS_CERT_DIR=/var/lib/mock-camera/certs ./mock-ptz-camera
+```
+
+### Cipher suites
+
+The server uses modern TLS settings compatible with all major browsers and curl:
+
+- **Minimum version**: TLS 1.2 (TLS 1.3 always enabled by Go)
+- **Key exchange**: ECDHE only (X25519, P-256)
+- **Ciphers (TLS 1.2)**: AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305
+- **Self-signed cert**: ECDSA P-256, 365-day validity, SANs include `localhost`, `127.0.0.1`, `::1`, and the detected/configured host IP
 
 ## Panoramic Renderer
 

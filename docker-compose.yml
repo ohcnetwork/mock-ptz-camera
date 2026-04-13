@@ -15,4 +15,20 @@ services:
       # Use 127.0.0.1 for same-machine testing, or your LAN IP for
       # external ONVIF clients (e.g. HOST_IP=192.168.1.100).
       - HOST_IP=${HOST_IP:-127.0.0.1}
+      # TLS is enabled by default. A self-signed cert is generated on first
+      # start and reused across restarts (persisted in TLS_CERT_DIR volume).
+      # Set TLS_ENABLED=false to disable TLS entirely.
+      # - TLS_ENABLED=true
+      # Provide custom cert/key to use your own certificate:
+      # - TLS_CERT_FILE=/certs/server.crt
+      # - TLS_KEY_FILE=/certs/server.key
+      # Directory for auto-generated certs (default: certs):
+      # - TLS_CERT_DIR=certs
+      # Separate HTTPS port (default 0 = mux HTTP+HTTPS on WEB_PORT):
+      # - TLS_PORT=0
+    volumes:
+      - certs:/app/certs
     restart: unless-stopped
+
+volumes:
+  certs:
