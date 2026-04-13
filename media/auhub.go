@@ -1,10 +1,19 @@
-package web
+package media
 
 import (
 	"sync"
 
 	log "github.com/sirupsen/logrus"
 )
+
+// Subscription is a source of H.264 access units that can be unsubscribed.
+type Subscription interface {
+	AccessUnits() <-chan [][]byte
+	Unsubscribe()
+}
+
+// SubscribeFunc creates a new AU subscription with the given buffer size.
+type SubscribeFunc func(bufSize int) Subscription
 
 // AUHub fans out H.264 access units to multiple subscribers.
 // It supports lifecycle callbacks: OnActive is called when the first

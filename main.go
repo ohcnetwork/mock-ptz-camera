@@ -7,13 +7,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 
 	log "github.com/sirupsen/logrus"
 
 	"github.com/ohcnetwork/mock-ptz-camera/auth"
 	"github.com/ohcnetwork/mock-ptz-camera/config"
+	"github.com/ohcnetwork/mock-ptz-camera/media"
 	"github.com/ohcnetwork/mock-ptz-camera/netutil"
 	"github.com/ohcnetwork/mock-ptz-camera/onvif"
 	"github.com/ohcnetwork/mock-ptz-camera/ptz"
@@ -79,54 +79,28 @@ func main() {
 		log.Info("using test pattern renderer")
 	}
 
-	encoder, err := renderer.NewEncoder(cfg.Width, cfg.Height, cfg.FPS, cfg.Bitrate)
+	sps, pps, err := renderer.BootstrapSPSPPS(cfg.Width, cfg.Height, cfg.FPS, cfg.Bitrate)
 	if err != nil {
-		log.WithError(err).Fatal("failed to start encoder")
+		log.WithError(err).Fatal("failed to bootstrap SPS/PPS")
 	}
 
-	// Send a blank frame to extract SPS/PPS from the encoder
-	blankFrame := make([]byte, cfg.Width*cfg.Height*3)
-	if err := encoder.WriteFrame(blankFrame); err != nil {
-		log.WithError(err).Fatal("failed to write blank frame")
-	}
-	encoder.WaitSPSPPS()
-	sps, pps := encoder.SPS(), encoder.PPS()
-	log.WithFields(log.Fields{
-		"sps_bytes": len(sps), "pps_bytes": len(pps),
-	}).Debug("got SPS/PPS from encoder")
-
-	// Drain stale AU from the blank frame, then stop the bootstrap encoder.
-	select {
-	case <-encoder.AccessUnits():
-	default:
-	}
-	encoder.Stop()
-
-	// ---- TLS setup ----
 	var tlsCfg *tls.Config
 	if cfg.TLSEnabled {
-		certFile := cfg.TLSCertFile
-		keyFile := cfg.TLSKeyFile
-		if certFile == "" || keyFile == "" {
-			certFile = filepath.Join(cfg.TLSCertDir, "server.crt")
-			keyFile = filepath.Join(cfg.TLSCertDir, "server.key")
-		}
-		cert, err := netutil.LoadOrGenerateCert(certFile, keyFile, []string{hostIP})
+		tlsCfg, err = netutil.SetupTLS(netutil.TLSOptions{
+			CertFile: cfg.TLSCertFile,
+			KeyFile:  cfg.TLSKeyFile,
+			CertDir:  cfg.TLSCertDir,
+			HostIP:   hostIP,
+		})
 		if err != nil {
-			log.WithError(err).Fatal("failed to load/generate TLS certificate")
+			log.WithError(err).Fatal("failed to set up TLS")
 		}
-		tlsCfg = netutil.NewTLSConfig(cert)
-		log.WithFields(log.Fields{
-			"cert": certFile, "key": keyFile,
-		}).Info("TLS enabled")
 	}
 
-	// ---- RTSP server ----
 	rtspServer, err := rtsp.NewServer(cfg.RTSPAddress(), creds, sps, pps)
 	if err != nil {
 		log.WithError(err).Fatal("failed to create RTSP server")
 	}
-
 	if cfg.TLSEnabled {
 		rtspLn, err := net.Listen("tcp", cfg.RTSPAddress())
 		if err != nil {
@@ -134,7 +108,6 @@ func main() {
 		}
 		rtspServer.SetListener(netutil.NewTransparentTLSListener(rtspLn, tlsCfg))
 	}
-
 	if err := rtspServer.Start(); err != nil {
 		log.WithError(err).Fatal("failed to start RTSP server")
 	}
@@ -146,16 +119,14 @@ func main() {
 		log.WithError(err).Fatal("failed to create RTP encoder")
 	}
 
-	auHub := web.NewAUHub(sps, pps)
-
-	// Wire RTSP server to subscribe/unsubscribe from AUHub on session play/close.
-	rtspServer.SetSubscriber(func(bufSize int) rtsp.Subscription {
+	auHub := media.NewAUHub(sps, pps)
+	rtspServer.SetSubscriber(func(bufSize int) media.Subscription {
 		return auHub.Subscribe(bufSize)
 	}, rtpEncoder)
 
-	// Pipeline starts/stops the encoder and render loop on demand
-	// when the first/last AUHub subscriber arrives/leaves.
-	_ = NewPipeline(activeRenderer, ptzState, auHub, cfg.Width, cfg.Height, cfg.FPS, cfg.Bitrate)
+	// On-demand pipeline: spins up encoder + render loop on first subscriber,
+	// tears down on last unsubscribe.
+	_ = media.NewPipeline(activeRenderer, ptzState, auHub, cfg.Width, cfg.Height, cfg.FPS, cfg.Bitrate)
 
 	onvifServer := onvif.NewServer(cfg, creds, ptzState, eventsService, hostIP)
 	webServer := web.NewServer(ptzState, creds, auHub, cfg.Width, cfg.Height)
@@ -164,46 +135,15 @@ func main() {
 	onvifServer.RegisterRoutes(mux)
 	webServer.RegisterRoutes(mux)
 
-	httpServer := &http.Server{
-		Handler: mux,
-	}
+	netutil.ServeHTTP(netutil.HTTPServeOptions{
+		Handler:    mux,
+		WebAddr:    cfg.WebAddress(),
+		TLSAddr:    cfg.TLSAddress(),
+		TLSConfig:  tlsCfg,
+		TLSEnabled: cfg.TLSEnabled,
+		TLSPort:    cfg.TLSPort,
+	})
 
-	// ---- Web server with optional TLS ----
-	switch {
-	case !cfg.TLSEnabled:
-		// Plain HTTP only.
-		httpServer.Addr = cfg.WebAddress()
-		netutil.ServeAsync("HTTP", cfg.WebAddress(), httpServer.ListenAndServe)
-
-	case cfg.TLSPort == 0:
-		// TLS mux: serve both HTTP and HTTPS on the same port.
-		webLn, err := net.Listen("tcp", cfg.WebAddress())
-		if err != nil {
-			log.WithError(err).Fatal("failed to listen on web address")
-		}
-		split := netutil.NewSplitListener(webLn)
-		go split.Serve()
-
-		httpsServer := &http.Server{Handler: mux, TLSConfig: tlsCfg}
-		netutil.ServeAsync("HTTP+HTTPS mux", cfg.WebAddress(), func() error {
-			return httpsServer.ServeTLS(split.TLS(), "", "")
-		})
-		netutil.ServeAsync("", "", func() error {
-			return httpServer.Serve(split.Plain())
-		})
-
-	default:
-		// Separate ports: HTTP on WebPort, HTTPS on TLSPort.
-		httpServer.Addr = cfg.WebAddress()
-		netutil.ServeAsync("HTTP", cfg.WebAddress(), httpServer.ListenAndServe)
-
-		httpsServer := &http.Server{Addr: cfg.TLSAddress(), Handler: mux, TLSConfig: tlsCfg}
-		netutil.ServeAsync("HTTPS", cfg.TLSAddress(), func() error {
-			return httpsServer.ListenAndServeTLS("", "")
-		})
-	}
-
-	// ---- ONVIF discovery ----
 	discovery := onvif.NewDiscoveryServer(
 		fmt.Sprintf("%s://%s:%d/onvif/device_service", httpScheme, hostIP, cfg.WebPort),
 	)
@@ -213,7 +153,6 @@ func main() {
 		defer discovery.Stop()
 	}
 
-	// ---- Ready ----
 	log.Info("mock PTZ camera ready")
 	log.Infof("RTSP:  %s://%s:%d/stream", rtspScheme, hostIP, cfg.RTSPPort)
 	log.Infof("ONVIF: %s://%s:%d/onvif/device_service", httpScheme, hostIP, cfg.WebPort)

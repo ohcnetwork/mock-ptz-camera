@@ -17,23 +17,15 @@ import (
 	"github.com/pion/rtp"
 
 	"github.com/ohcnetwork/mock-ptz-camera/auth"
+	"github.com/ohcnetwork/mock-ptz-camera/media"
 )
-
-// Subscription is a source of H.264 access units that can be unsubscribed.
-type Subscription interface {
-	AccessUnits() <-chan [][]byte
-	Unsubscribe()
-}
-
-// SubscribeFunc creates a new AU subscription with the given buffer size.
-type SubscribeFunc func(bufSize int) Subscription
 
 type Server struct {
 	lib         *gortsplib.Server
 	stream      *gortsplib.ServerStream
 	Format      *format.H264
 	creds       auth.Credentials
-	subscribeFn SubscribeFunc
+	subscribeFn media.SubscribeFunc
 	rtpEncoder  *rtph264.Encoder
 }
 
@@ -44,7 +36,7 @@ type serverHandler struct {
 
 	mu        sync.Mutex
 	playing   map[*gortsplib.ServerSession]struct{}
-	activeSub Subscription
+	activeSub media.Subscription
 }
 
 func NewServer(address string, creds auth.Credentials, sps, pps []byte) (*Server, error) {
@@ -85,7 +77,7 @@ func (s *Server) SetListener(ln net.Listener) {
 
 // SetSubscriber configures the function used to create AU subscriptions
 // and the RTP encoder for packetising H.264 frames.
-func (s *Server) SetSubscriber(fn SubscribeFunc, rtpEnc *rtph264.Encoder) {
+func (s *Server) SetSubscriber(fn media.SubscribeFunc, rtpEnc *rtph264.Encoder) {
 	s.subscribeFn = fn
 	s.rtpEncoder = rtpEnc
 }

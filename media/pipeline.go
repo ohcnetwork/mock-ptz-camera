@@ -1,4 +1,4 @@
-package main
+package media
 
 import (
 	"sync"
@@ -7,7 +7,6 @@ import (
 
 	"github.com/ohcnetwork/mock-ptz-camera/ptz"
 	"github.com/ohcnetwork/mock-ptz-camera/renderer"
-	"github.com/ohcnetwork/mock-ptz-camera/web"
 )
 
 // Pipeline manages the on-demand lifecycle of the rendering and encoding
@@ -19,7 +18,7 @@ type Pipeline struct {
 	running  bool
 	r        renderer.Renderer
 	ptzState *ptz.State
-	auHub    *web.AUHub
+	auHub    *AUHub
 	width    int
 	height   int
 	fps      int
@@ -30,7 +29,7 @@ type Pipeline struct {
 
 // NewPipeline creates a new on-demand pipeline and registers itself as the
 // AUHub's active/idle callbacks.
-func NewPipeline(r renderer.Renderer, ptzState *ptz.State, auHub *web.AUHub, width, height, fps int, bitrate string) *Pipeline {
+func NewPipeline(r renderer.Renderer, ptzState *ptz.State, auHub *AUHub, width, height, fps int, bitrate string) *Pipeline {
 	p := &Pipeline{
 		r:        r,
 		ptzState: ptzState,

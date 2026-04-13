@@ -166,12 +166,15 @@ The camera is discoverable via WS-Discovery and compatible with ONVIF Device Man
 ## Project Structure
 
 ```
-├── main.go              # Entry point, wiring, bootstrap SPS/PPS extraction
-├── pipeline.go          # On-demand pipeline lifecycle (start/stop encoder + render loop)
+├── main.go              # Entry point and wiring
 ├── config/              # Environment-based configuration
 ├── auth/                # WS-UsernameToken + RTSP Digest validation
+├── media/
+│   ├── auhub.go         # H.264 access unit fan-out hub (encoder → RTSP + WebSocket)
+│   └── pipeline.go      # On-demand pipeline lifecycle (start/stop encoder + render loop)
 ├── ptz/                 # PTZ state machine (position, velocity, presets)
 ├── renderer/
+│   ├── bootstrap.go     # SPS/PPS extraction via temporary encoder
 │   ├── encoder.go       # FFmpeg H.264 encoder subprocess
 │   ├── renderloop.go    # Frame render loop (drives encoder)
 │   ├── testpattern.go   # Test pattern image renderer
@@ -193,11 +196,14 @@ The camera is discoverable via WS-Discovery and compatible with ONVIF Device Man
 ├── netutil/
 │   ├── cert.go          # Self-signed cert generation (ECDSA P-256) and loading
 │   ├── config.go        # TLS config builder (TLS 1.2+, modern ciphers)
+│   ├── tls.go           # High-level TLS setup (load/generate cert + config)
+│   ├── http.go          # HTTP/HTTPS serving (plain, mux, split-port modes)
+│   ├── serve.go         # Async server launcher helper
+│   ├── host.go          # Host IP auto-detection
 │   └── mux.go           # TLS muxing (SplitListener for HTTP, TransparentTLSListener for RTSP)
 ├── web/
 │   ├── server.go        # HTTP server, route registration, auth middleware
 │   ├── websocket.go     # WebSocket PTZ command handler
-│   ├── auhub.go         # H.264 access unit fan-out hub (encoder → RTSP + WebSocket)
 │   └── static/
 │       ├── index.html   # Camera control UI (single-page, shadcn-inspired dark theme)
 │       ├── test.html    # API test UI with manual and automated test runner

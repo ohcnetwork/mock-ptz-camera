@@ -13,6 +13,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/ohcnetwork/mock-ptz-camera/auth"
+	"github.com/ohcnetwork/mock-ptz-camera/media"
 	"github.com/ohcnetwork/mock-ptz-camera/ptz"
 )
 
@@ -26,12 +27,12 @@ var upgrader = websocket.Upgrader{
 type Server struct {
 	ptzState *ptz.State
 	creds    auth.Credentials
-	auHub    *AUHub
+	auHub    *media.AUHub
 	width    int
 	height   int
 }
 
-func NewServer(ptzState *ptz.State, creds auth.Credentials, auHub *AUHub, width, height int) *Server {
+func NewServer(ptzState *ptz.State, creds auth.Credentials, auHub *media.AUHub, width, height int) *Server {
 	return &Server{
 		ptzState: ptzState,
 		creds:    creds,
