@@ -60,7 +60,7 @@ func NewServer(address string, creds auth.Credentials, sps, pps []byte) (*Server
 	s.lib = &gortsplib.Server{
 		Handler:        handler,
 		RTSPAddress:    address,
-		WriteQueueSize: 1024,
+		WriteQueueSize: 256,
 	}
 
 	return s, nil
@@ -174,7 +174,7 @@ func (h *serverHandler) OnPlay(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Res
 	h.mu.Lock()
 	h.playing[ctx.Session] = struct{}{}
 	if len(h.playing) == 1 && h.s.subscribeFn != nil {
-		sub := h.s.subscribeFn(64)
+		sub := h.s.subscribeFn(8)
 		h.activeSub = sub
 		go StreamLoop(sub, h.s.rtpEncoder, h.s)
 		log.Info("first RTSP viewer, subscribed to pipeline")

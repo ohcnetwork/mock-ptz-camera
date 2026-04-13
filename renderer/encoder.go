@@ -54,7 +54,7 @@ func NewEncoder(width, height, fps int, bitrate string) (*Encoder, error) {
 	e := &Encoder{
 		width: width, height: height, fps: fps,
 		bitrate:     bitrate,
-		aus:         make(chan [][]byte, 4),
+		aus:         make(chan [][]byte, 2),
 		done:        make(chan struct{}),
 		spsPPSReady: make(chan struct{}),
 	}
@@ -238,7 +238,7 @@ func (e *Encoder) waitAndRestart() {
 	}
 
 	// Allocate a fresh AU channel for the new readNALUs goroutine.
-	e.aus = make(chan [][]byte, 4)
+	e.aus = make(chan [][]byte, 2)
 
 	log.WithError(err).Warn("ffmpeg exited, restarting...")
 	if restartErr := e.startProcess(); restartErr != nil {
